@@ -1,23 +1,32 @@
 {
-  "version": 2,
-  "name": "spentify-expense-tracker",
   "cleanUrls": true,
   "rewrites": [
     {
       "source": "/",
-      "destination": "/chrome-extension/index.html"
+      "destination": "/index.html"
     },
     {
       "source": "/dashboard",
-      "destination": "/chrome-extension/dashboard.html"
+      "destination": "/dashboard.html"
     },
     {
       "source": "/auth",
-      "destination": "/chrome-extension/auth.html"
-    },
+      "destination": "/auth.html"
+    }
+  ],
+  "headers": [
     {
       "source": "/(.*)",
-      "destination": "/chrome-extension/$1"
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        }
+      ]
     }
   ]
 }
