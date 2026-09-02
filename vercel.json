@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "name": "spentify-expense-tracker",
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/chrome-extension/index.html"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/chrome-extension/dashboard.html"
+    },
+    {
+      "source": "/auth",
+      "destination": "/chrome-extension/auth.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/chrome-extension/$1"
+    }
+  ]
+}

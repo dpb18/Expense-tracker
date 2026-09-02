@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Spentify - Instant Daily Expense Tracker",
+  "version": "1.0.0",
+  "description": "Log daily expenses in seconds without leaving your browser. Features full analytics dashboard, budget alerts, and real-time mobile sync.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Spentify - Quick Expense Tracker",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "dashboard.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "identity",
+    "identity.email"
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+E",
+        "mac": "Alt+Shift+E"
+      },
+      "description": "Open Quick Expense Logger"
+    },
+    "open_dashboard": {
+      "suggested_key": {
+        "default": "Alt+Shift+D",
+        "mac": "Alt+Shift+D"
+      },
+      "description": "Open Full Expense Dashboard"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
