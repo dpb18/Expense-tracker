@@ -392,7 +392,7 @@
       <section class="assets-header-section">
         <div class="section-title-group">
           <h2 class="assets-main-title">📈 Wealth & Investment Portfolio</h2>
-          <p class="assets-main-sub">Track your SIPs, Stocks, Paytm Gold, FDs, and asset growth in Indian Rupees (INR ₹)</p>
+          <p class="assets-main-sub">Track your SIPs, Stocks, Mutual Funds, FDs, and asset growth in Indian Rupees (INR ₹)</p>
         </div>
         <div class="assets-header-actions">
           <button type="button" id="addAssetHeroBtn" class="btn btn-gold">
@@ -497,13 +497,13 @@
                   <circle cx="11" cy="11" r="8"></circle>
                   <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
-                <input type="text" id="assetSearchInput" placeholder="Search SIP, Stocks, Paytm Gold..." class="search-input">
+                <input type="text" id="assetSearchInput" placeholder="Search SIP, Stocks, Gold, Mutual Funds..." class="search-input">
               </div>
 
               <!-- Asset Category Filter -->
               <select id="assetCategoryFilter" class="filter-select">
                 <option value="all">All Asset Classes</option>
-                <option value="gold">🟡 Paytm Gold & Digital Gold</option>
+                <option value="gold">🟡 Gold & Precious Metals</option>
                 <option value="sip">📊 Mutual Funds & SIP</option>
                 <option value="stocks">📈 Stocks & Equities</option>
                 <option value="fd">🏦 Fixed Deposit & PPF</option>
@@ -514,9 +514,9 @@
               <!-- Asset Platform Filter -->
               <select id="assetPlatformFilter" class="filter-select">
                 <option value="all">All Platforms</option>
-                <option value="paytm">🟡 Paytm Money / Gold</option>
                 <option value="zerodha">🪁 Zerodha</option>
                 <option value="groww">🌱 Groww</option>
+                <option value="paytm">🟡 Paytm Money</option>
                 <option value="indmoney">💼 INDmoney</option>
                 <option value="bank">🏦 Bank / Post Office</option>
                 <option value="other">🌐 Other</option>
@@ -548,7 +548,7 @@
             <div id="assetsEmptyState" class="table-empty-state" style="display: none;">
               <div class="empty-icon">📈</div>
               <h4>No investment assets recorded yet</h4>
-              <p>Add your Mutual Fund SIPs, Stocks, Paytm Gold, or Fixed Deposits to monitor your wealth growth.</p>
+              <p>Add your Mutual Fund SIPs, Stocks, Gold, or Fixed Deposits to monitor your wealth growth.</p>
               <div style="margin-top: 14px;">
                 <button type="button" id="emptyStateAddAssetBtn" class="btn btn-gold">
                   <span>+ Add Your First Investment</span>
@@ -575,12 +575,12 @@
         <div class="form-row">
           <div class="form-group flex-1">
             <label for="assetNameInput">Asset / Holding Name *</label>
-            <input type="text" id="assetNameInput" class="modal-input" placeholder="e.g. Paytm Digital Gold 24K, Parag Parikh Flexi Cap, Tata Motors" required>
+            <input type="text" id="assetNameInput" class="modal-input" placeholder="e.g. Parag Parikh Flexi Cap, Tata Motors, Sovereign Gold Bond" required>
           </div>
           <div class="form-group flex-1">
             <label for="assetCategorySelect">Asset Class *</label>
             <select id="assetCategorySelect" class="modal-select" required>
-              <option value="gold">🟡 Paytm & Digital Gold</option>
+              <option value="gold">🟡 Gold & Precious Metals</option>
               <option value="sip" selected>📊 Mutual Fund & Monthly SIP</option>
               <option value="stocks">📈 Stocks & Equities</option>
               <option value="fd">🏦 Fixed Deposit & PPF</option>
@@ -595,9 +595,9 @@
           <div class="form-group flex-1">
             <label for="assetPlatformSelect">Platform / Broker *</label>
             <select id="assetPlatformSelect" class="modal-select" required>
-              <option value="paytm">🟡 Paytm Money / Paytm Gold</option>
               <option value="zerodha">🪁 Zerodha Kite / Coin</option>
               <option value="groww">🌱 Groww</option>
+              <option value="paytm">🟡 Paytm Money</option>
               <option value="indmoney">💼 INDmoney</option>
               <option value="angelone">👼 Angel One</option>
               <option value="bank">🏦 Bank / Post Office</option>

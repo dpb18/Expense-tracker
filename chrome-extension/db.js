@@ -35,12 +35,7 @@ class ExpenseDatabase {
     this.firebaseApp = null;
     this.firestore = null;
     this.auth = null;
-    this.currentUser = {
-      uid: 'local_wallet',
-      email: 'personal@spentify.local',
-      displayName: 'Personal Wallet',
-      isLocal: true
-    };
+    this.currentUser = null;
     this.firestoreUnsubscribe = null;
     this.firestoreAssetUnsubscribe = null;
 
@@ -196,7 +191,9 @@ class ExpenseDatabase {
       }
 
       if (loadedAssets && Array.isArray(loadedAssets)) {
-        this.assets = loadedAssets;
+        this.assets = loadedAssets.filter(a => !a.id || !a.id.startsWith('ast_demo_'));
+      } else {
+        this.assets = [];
       }
 
       if (loadedSettings) {
@@ -242,7 +239,7 @@ class ExpenseDatabase {
         }
       }
 
-      if (loadedUser) this.currentUser = loadedUser;
+      this.currentUser = (loadedUser && !loadedUser.isLocal) ? loadedUser : null;
 
       // Sync across both storage engines
       if (this.isExtension()) {
@@ -346,8 +343,12 @@ class ExpenseDatabase {
   // --- CRUD Operations ---
 
   async addExpense(expenseData) {
-    const userEmail = (this.currentUser && this.currentUser.email) || 'personal@spentify.local';
-    const userUid = (this.currentUser && this.currentUser.uid) || 'local_wallet';
+    if (!this.currentUser || this.currentUser.isLocal) {
+      throw new Error('Please sign in with Google to log transactions.');
+    }
+
+    const userEmail = this.currentUser.email || '';
+    const userUid = this.currentUser.uid || '';
 
     const type = expenseData.type === 'income' ? 'income' : 'expense';
     const id = (type === 'income' ? 'inc_' : 'exp_') + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
@@ -400,16 +401,15 @@ class ExpenseDatabase {
     this.notifyListeners();
 
     if (this.firestore && this.currentUser && !this.currentUser.isLocal) {
-      try {
-        await this.firestore
-          .collection('users')
-          .doc(userUid)
-          .collection('expenses')
-          .doc(id)
-          .set(newExpense);
-      } catch (err) {
-        console.warn('Cloud Firestore sync pending (offline):', err);
-      }
+      this.firestore
+        .collection('users')
+        .doc(userUid)
+        .collection('expenses')
+        .doc(id)
+        .set(newExpense)
+        .catch(err => {
+          console.warn('Cloud Firestore sync pending (offline):', err);
+        });
     }
 
     return newExpense;
@@ -473,8 +473,12 @@ class ExpenseDatabase {
   // --- Wealth & Asset Management Operations (SIPs, Stocks, Paytm Gold) ---
 
   async addAsset(assetData) {
-    const userEmail = (this.currentUser && this.currentUser.email) || 'personal@spentify.local';
-    const userUid = (this.currentUser && this.currentUser.uid) || 'local_wallet';
+    if (!this.currentUser || this.currentUser.isLocal) {
+      throw new Error('Please sign in with Google to manage assets.');
+    }
+
+    const userEmail = this.currentUser.email || '';
+    const userUid = this.currentUser.uid || '';
     const id = 'ast_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
     const investedAmount = parseFloat(assetData.investedAmount) || 0;
     const currentValue = (assetData.currentValue !== undefined && !isNaN(parseFloat(assetData.currentValue))) ? parseFloat(assetData.currentValue) : investedAmount;
@@ -509,16 +513,15 @@ class ExpenseDatabase {
     this.notifyListeners();
 
     if (this.firestore && this.currentUser && !this.currentUser.isLocal) {
-      try {
-        await this.firestore
-          .collection('users')
-          .doc(userUid)
-          .collection('assets')
-          .doc(id)
-          .set(newAsset);
-      } catch (err) {
-        console.warn('Cloud Firestore asset sync note:', err);
-      }
+      this.firestore
+        .collection('users')
+        .doc(userUid)
+        .collection('assets')
+        .doc(id)
+        .set(newAsset)
+        .catch(err => {
+          console.warn('Cloud Firestore asset sync note:', err);
+        });
     }
 
     return newAsset;
@@ -646,52 +649,7 @@ class ExpenseDatabase {
   }
 
   seedInitialAssets() {
-    this.assets = [
-      {
-        id: 'ast_demo_1',
-        name: 'Paytm Digital Gold (24K 99.9% Pure)',
-        category: 'gold',
-        platform: 'paytm',
-        investedAmount: 10000,
-        currentValue: 11450,
-        isSip: false,
-        monthlySip: 0,
-        units: 1.48,
-        unitType: 'grams',
-        purchaseDate: getLocalDateString(new Date(Date.now() - 60 * 86400000)),
-        notes: 'Paytm Gold vault 24 Karat',
-        createdAt: Date.now() - 60 * 86400000
-      },
-      {
-        id: 'ast_demo_2',
-        name: 'Parag Parikh Flexi Cap Direct Growth',
-        category: 'sip',
-        platform: 'zerodha',
-        investedAmount: 25000,
-        currentValue: 28900,
-        isSip: true,
-        monthlySip: 2500,
-        sipDay: 5,
-        purchaseDate: getLocalDateString(new Date(Date.now() - 120 * 86400000)),
-        notes: 'Monthly SIP via Coin',
-        createdAt: Date.now() - 120 * 86400000
-      },
-      {
-        id: 'ast_demo_3',
-        name: 'Tata Motors Ltd (NSE Shares)',
-        category: 'stocks',
-        platform: 'groww',
-        investedAmount: 18000,
-        currentValue: 21350,
-        isSip: false,
-        monthlySip: 0,
-        units: 20,
-        unitType: 'shares',
-        purchaseDate: getLocalDateString(new Date(Date.now() - 90 * 86400000)),
-        notes: 'Bluechip auto sector holding',
-        createdAt: Date.now() - 90 * 86400000
-      }
-    ];
+    this.assets = [];
   }
 
   async saveSettings(newSettings) {
@@ -781,12 +739,7 @@ class ExpenseDatabase {
       this.firestoreAssetUnsubscribe();
       this.firestoreAssetUnsubscribe = null;
     }
-    this.currentUser = {
-      uid: 'local_wallet',
-      email: 'personal@spentify.local',
-      displayName: 'Personal Wallet',
-      isLocal: true
-    };
+    this.currentUser = null;
     await this.saveLocalData();
     this.notifyAuthListeners();
     this.notifyListeners();

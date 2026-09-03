@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const heroCurrentDate = document.getElementById('heroCurrentDate');
   const recentList = document.getElementById('recentList');
   const openDashboardBtn = document.getElementById('openDashboardBtn');
+  const closePopupBtn = document.getElementById('closePopupBtn');
   const viewAllLink = document.getElementById('viewAllLink');
   const toggleDetailsBtn = document.getElementById('toggleDetailsBtn');
   const extraDetailsPanel = document.getElementById('extraDetailsPanel');
@@ -53,6 +54,48 @@ document.addEventListener('DOMContentLoaded', async () => {
   const timeInput = document.getElementById('timeInput');
   const notesInput = document.getElementById('notesInput');
   const toast = document.getElementById('toast');
+
+  function closePopup() {
+    try {
+      window.close();
+    } catch (e) {}
+
+    if (typeof chrome !== 'undefined') {
+      if (chrome.tabs && chrome.tabs.getCurrent) {
+        try {
+          chrome.tabs.getCurrent((tab) => {
+            if (tab && tab.id) {
+              chrome.tabs.remove(tab.id);
+            }
+          });
+        } catch (e) {}
+      }
+      if (chrome.windows && chrome.windows.getCurrent) {
+        try {
+          chrome.windows.getCurrent((win) => {
+            if (win && win.id) {
+              chrome.windows.remove(win.id);
+            }
+          });
+        } catch (e) {}
+      }
+    }
+
+    try {
+      window.open('', '_self', '');
+      window.close();
+    } catch (e) {}
+  }
+
+  if (closePopupBtn) {
+    closePopupBtn.addEventListener('click', () => closePopup());
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closePopup();
+    }
+  });
 
   function getLocalDateString(d = new Date()) {
     const year = d.getFullYear();
@@ -224,12 +267,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   function checkAuthState() {
+    const isSignedIn = window.db.currentUser && !window.db.currentUser.isLocal;
+
+    if (!isSignedIn) {
+      if (authGateScreen) authGateScreen.style.display = 'flex';
+      if (accountModal) accountModal.style.display = 'none';
+      if (authenticatedView) authenticatedView.style.display = 'none';
+      return;
+    }
+
     if (authGateScreen) authGateScreen.style.display = 'none';
     if (accountModal) accountModal.style.display = 'none';
     if (authenticatedView) authenticatedView.style.display = 'flex';
 
-    if (window.db.currentUser && !window.db.currentUser.isLocal) {
-      googleUserEmail.textContent = window.db.currentUser.displayName || window.db.currentUser.email.split('@')[0];
+    if (window.db.currentUser) {
+      googleUserEmail.textContent = window.db.currentUser.displayName || (window.db.currentUser.email ? window.db.currentUser.email.split('@')[0] : 'User');
 
       if (window.db.currentUser.photoURL) {
         navUserAvatarImg.src = window.db.currentUser.photoURL;
@@ -240,11 +292,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         defaultGIcon.style.display = 'inline-flex';
         defaultGIcon.textContent = 'G';
       }
-    } else {
-      googleUserEmail.textContent = 'Personal Wallet';
-      navUserAvatarImg.style.display = 'none';
-      defaultGIcon.style.display = 'inline-flex';
-      defaultGIcon.textContent = '👤';
     }
 
     applyTypeChange();
@@ -294,6 +341,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   quickAddForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
+    if (!window.db.currentUser || window.db.currentUser.isLocal) {
+      showToast('Please sign in with Google to log transactions.');
+      checkAuthState();
+      return;
+    }
+
     const amount = parseFloat(amountInput.value);
     const title = titleInput.value.trim();
 
@@ -307,28 +360,39 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    await window.db.addExpense({
-      type: selectedType,
-      amount,
-      title,
-      category: selectedCategory,
-      paymentMethod: selectedPaymentMethod,
-      date: dateInput.value || getLocalDateString(new Date()),
-      time: timeInput.value || new Date().toTimeString().split(' ')[0].substr(0, 5),
-      notes: notesInput.value || '',
-      source: 'chrome_popup'
-    });
+    const symbol = (window.db.settings && window.db.settings.currencySymbol) || '₹';
 
-    // Reset Form
-    amountInput.value = '';
-    titleInput.value = '';
-    notesInput.value = '';
-    extraDetailsPanel.style.display = 'none';
-    toggleDetailsBtn.textContent = '+ Add notes or custom date';
-    updateInstallmentHint();
-    amountInput.focus();
+    try {
+      await window.db.addExpense({
+        type: selectedType,
+        amount,
+        title,
+        category: selectedCategory,
+        paymentMethod: selectedPaymentMethod,
+        date: dateInput.value || getLocalDateString(new Date()),
+        time: timeInput.value || new Date().toTimeString().split(' ')[0].substr(0, 5),
+        notes: notesInput.value || '',
+        source: 'chrome_popup'
+      });
 
-    showToast(`${selectedType === 'income' ? 'Recorded income' : (['credit_card', 'lazypay', 'flipkart_pay3'].includes(selectedPaymentMethod) ? 'Recorded credit/BNPL expense' : 'Logged cash expense')} ${symbol}${amount}`);
+      // Reset Form
+      amountInput.value = '';
+      titleInput.value = '';
+      notesInput.value = '';
+      extraDetailsPanel.style.display = 'none';
+      toggleDetailsBtn.textContent = '+ Add notes or custom date';
+      updateInstallmentHint();
+
+      showToast(`${selectedType === 'income' ? 'Recorded income' : (['credit_card', 'lazypay', 'flipkart_pay3'].includes(selectedPaymentMethod) ? 'Recorded credit/BNPL expense' : 'Logged cash expense')} ${symbol}${amount}`);
+
+      // Automatically close the popup window
+      setTimeout(() => {
+        closePopup();
+      }, 300);
+    } catch (err) {
+      console.error('Error logging transaction:', err);
+      showToast(err.message || 'Error logging transaction');
+    }
   });
 
   // Open Full Dashboard

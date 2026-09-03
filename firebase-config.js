@@ -54,7 +54,7 @@ const DEFAULT_SETTINGS = {
     { id: "card", name: "Card", icon: "💳", type: "credit" } // backward compat
   ],
   assetCategories: [
-    { id: "gold", name: "Paytm Gold & Digital Gold", icon: "🟡", color: "#eab308" },
+    { id: "gold", name: "Gold & Precious Metals", icon: "🟡", color: "#eab308" },
     { id: "sip", name: "Mutual Funds & SIP", icon: "📊", color: "#3b82f6" },
     { id: "stocks", name: "Stocks & Equities", icon: "📈", color: "#10b981" },
     { id: "fd", name: "Fixed Deposit & PPF", icon: "🏦", color: "#8b5cf6" },
@@ -62,9 +62,9 @@ const DEFAULT_SETTINGS = {
     { id: "other", name: "Other Investments", icon: "🌐", color: "#64748b" }
   ],
   assetPlatforms: [
-    { id: "paytm", name: "Paytm Money / Paytm Gold", icon: "🟡" },
     { id: "zerodha", name: "Zerodha Kite / Coin", icon: "🪁" },
     { id: "groww", name: "Groww", icon: "🌱" },
+    { id: "paytm", name: "Paytm Money", icon: "🟡" },
     { id: "indmoney", name: "INDmoney", icon: "💼" },
     { id: "angelone", name: "Angel One", icon: "👼" },
     { id: "upstox", name: "Upstox", icon: "⚡" },

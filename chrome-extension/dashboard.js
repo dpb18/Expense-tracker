@@ -454,6 +454,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Modal Form Submit (Add or Edit)
   modalExpenseForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+
+    if (!window.db.currentUser || window.db.currentUser.isLocal) {
+      alert('Please sign in with Google to save transactions.');
+      return;
+    }
+
     const amount = parseFloat(modalAmount.value);
     const title = modalTitleInput.value.trim();
     const category = modalCategorySelect.value;
@@ -465,17 +471,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (isNaN(amount) || amount <= 0 || !title) return;
 
-    const id = editExpenseId.value;
-    if (id) {
-      await window.db.updateExpense(id, { type, amount, title, category, paymentMethod, date, time, notes });
-      showToast(`Updated ${type === 'income' ? 'income' : 'expense'} "${title}"`);
-    } else {
-      await window.db.addExpense({ type, amount, title, category, paymentMethod, date, time, notes, source: 'dashboard' });
-      showToast(`Logged new ${type === 'income' ? 'income' : 'expense'} "${title}"`);
+    try {
+      const id = editExpenseId.value;
+      if (id) {
+        await window.db.updateExpense(id, { type, amount, title, category, paymentMethod, date, time, notes });
+        showToast(`Updated ${type === 'income' ? 'income' : 'expense'} "${title}"`);
+      } else {
+        await window.db.addExpense({ type, amount, title, category, paymentMethod, date, time, notes, source: 'dashboard' });
+        showToast(`Logged new ${type === 'income' ? 'income' : 'expense'} "${title}"`);
+      }
+    } catch (err) {
+      console.error('Save transaction error:', err);
+      showToast(err.message || 'Error saving transaction');
+    } finally {
+      closeExpenseModal();
+      refreshDashboard();
     }
-
-    closeExpenseModal();
-    refreshDashboard();
   });
 
   // --- Helper Functions ---
@@ -538,6 +549,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function openExpenseModalForAdd(initialType = 'expense') {
+    if (!window.db.currentUser || window.db.currentUser.isLocal) {
+      alert('Please sign in with Google to record expenses or income.');
+      if (googleAuthBtn) googleAuthBtn.click();
+      return;
+    }
+
     editExpenseId.value = '';
     modalAmount.value = '';
     modalTitleInput.value = '';
@@ -568,7 +585,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function closeExpenseModal() {
-    expenseModal.style.display = 'none';
+    if (expenseModal) {
+      expenseModal.style.display = 'none';
+    }
+    editExpenseId.value = '';
+    modalAmount.value = '';
+    modalTitleInput.value = '';
+    if (modalNotesInput) modalNotesInput.value = '';
   }
 
   function getFilteredExpenses() {
@@ -1516,11 +1539,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --- Asset Modal Actions ---
 
   function openAssetModalForAdd() {
+    if (!window.db.currentUser || window.db.currentUser.isLocal) {
+      alert('Please sign in with Google to add or manage your investment portfolio.');
+      if (googleAuthBtn) googleAuthBtn.click();
+      return;
+    }
+
     editAssetId.value = '';
     assetModalTitle.textContent = 'Add Investment / Asset';
     assetNameInput.value = '';
     assetCategorySelect.value = 'sip';
-    assetPlatformSelect.value = 'paytm';
+    assetPlatformSelect.value = 'zerodha';
     assetInvestedInput.value = '';
     assetCurrentValInput.value = '';
     assetIsSipCheck.checked = false;
@@ -1537,6 +1566,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function openAssetModalForEdit(asset) {
+    if (!window.db.currentUser || window.db.currentUser.isLocal) {
+      alert('Please sign in with Google to edit your portfolio.');
+      return;
+    }
+
     editAssetId.value = asset.id;
     assetModalTitle.textContent = 'Edit Investment / Asset';
     assetNameInput.value = asset.name || '';
@@ -1566,14 +1600,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     assetCategorySelect.addEventListener('change', () => {
       const cat = assetCategorySelect.value;
       if (cat === 'gold') {
-        assetPlatformSelect.value = 'paytm';
+        assetPlatformSelect.value = 'other';
         assetUnitTypeInput.value = 'grams';
-        if (!assetNameInput.value) assetNameInput.value = 'Paytm Digital Gold 24K';
       } else if (cat === 'stocks') {
+        assetPlatformSelect.value = 'zerodha';
         assetUnitTypeInput.value = 'shares';
         assetIsSipCheck.checked = false;
         sipFieldsRow.style.display = 'none';
       } else if (cat === 'sip') {
+        assetPlatformSelect.value = 'zerodha';
+        assetUnitTypeInput.value = 'units';
         assetIsSipCheck.checked = true;
         sipFieldsRow.style.display = 'flex';
       }
@@ -1604,6 +1640,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (assetModalForm) {
     assetModalForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+
+      if (!window.db.currentUser || window.db.currentUser.isLocal) {
+        alert('Please sign in with Google to save investments.');
+        return;
+      }
+
       const id = editAssetId.value;
       const inv = parseFloat(assetInvestedInput.value) || 0;
       const cur = (assetCurrentValInput.value !== undefined && !isNaN(parseFloat(assetCurrentValInput.value))) ? parseFloat(assetCurrentValInput.value) : inv;
@@ -1623,22 +1665,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         notes: assetNotesInput.value.trim()
       };
 
-      if (id) {
-        await window.db.updateAsset(id, data);
-        showToast(`Updated "${data.name}"`);
-      } else {
-        await window.db.addAsset(data);
-        showToast(`Added "${data.name}" to your portfolio`);
+      try {
+        if (id) {
+          await window.db.updateAsset(id, data);
+          showToast(`Updated "${data.name}"`);
+        } else {
+          await window.db.addAsset(data);
+          showToast(`Added "${data.name}" to your portfolio`);
+        }
+      } catch (err) {
+        console.error('Save asset error:', err);
+        showToast(err.message || 'Error saving asset');
+      } finally {
+        closeAssetModal();
+        refreshAssetsView();
       }
-
-      closeAssetModal();
-      refreshAssetsView();
     });
   }
 
   // --- Top-up / Installment Modal Actions ---
 
   function openTopupModal(asset) {
+    if (!window.db.currentUser || window.db.currentUser.isLocal) {
+      alert('Please sign in with Google to manage assets.');
+      return;
+    }
+
     topupAssetId.value = asset.id;
     if (topupAssetInfoText) {
       topupAssetInfoText.innerHTML = `Adding investment installment to: <strong style="color:#fde047;">${escapeHtml(asset.name)}</strong> (Current: ${formatCurrency(asset.investedAmount)})`;
@@ -1661,6 +1713,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (assetTopupForm) {
     assetTopupForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+
+      if (!window.db.currentUser || window.db.currentUser.isLocal) {
+        alert('Please sign in with Google to add top-up installments.');
+        return;
+      }
+
       const id = topupAssetId.value;
       const amt = parseFloat(topupAmountInput.value) || 0;
       const date = topupDateInput.value;
@@ -1671,10 +1729,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
-      await window.db.addAssetTopup(id, amt, date, note);
-      showToast(`+${formatCurrency(amt)} added to asset holding`);
-      closeTopupModal();
-      refreshAssetsView();
+      try {
+        await window.db.addAssetTopup(id, amt, date, note);
+        showToast(`+${formatCurrency(amt)} added to asset holding`);
+      } catch (err) {
+        console.error('Topup error:', err);
+        showToast(err.message || 'Error adding topup');
+      } finally {
+        closeTopupModal();
+        refreshAssetsView();
+      }
     });
   }
 
@@ -1687,9 +1751,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     await window.db.init();
     
-    // If no assets yet, seed realistic Indian investments (Paytm Gold, Parag Parikh SIP, Tata Motors)
-    if (!window.db.assets || window.db.assets.length === 0) {
-      window.db.seedInitialAssets();
+    // Clean up any previously seeded mock demo assets so portfolio starts clean at zero
+    if (!window.db.assets) {
+      window.db.assets = [];
+    }
+    if (window.db.assets.some(a => a.id && a.id.startsWith('ast_demo_'))) {
+      window.db.assets = window.db.assets.filter(a => !a.id.startsWith('ast_demo_'));
       window.db.saveLocalData();
     }
 
