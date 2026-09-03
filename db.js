@@ -23,6 +23,11 @@ function isRolloverItem(item) {
     title.includes('savings for');
 }
 
+function getCanonicalUserId(email) {
+  if (!email) return 'default_user';
+  return 'user_' + String(email).toLowerCase().trim().replace(/[^a-z0-9]/g, '_');
+}
+
 class ExpenseDatabase {
   constructor() {
     this.expenses = [];
@@ -129,6 +134,11 @@ class ExpenseDatabase {
     }
   }
 
+  getUserId() {
+    if (!this.currentUser || !this.currentUser.email) return 'default_user';
+    return getCanonicalUserId(this.currentUser.email);
+  }
+
   async init() {
     if (this.isInitialized) return;
 
@@ -137,6 +147,11 @@ class ExpenseDatabase {
 
     // 2. Initialize Firebase
     await this.initFirebase();
+
+    // 3. Immediately start cloud sync listener if user is logged in
+    if (this.currentUser && this.currentUser.email && !this.currentUser.isLocal) {
+      this.startFirestoreListener();
+    }
 
     this.isInitialized = true;
     this.notifyAuthListeners();
@@ -240,6 +255,9 @@ class ExpenseDatabase {
       }
 
       this.currentUser = (loadedUser && !loadedUser.isLocal) ? loadedUser : null;
+      if (this.currentUser && this.currentUser.email) {
+        this.currentUser.uid = getCanonicalUserId(this.currentUser.email);
+      }
 
       // Sync across both storage engines
       if (this.isExtension()) {
@@ -347,8 +365,8 @@ class ExpenseDatabase {
       throw new Error('Please sign in with Google to log transactions.');
     }
 
-    const userEmail = this.currentUser.email || '';
-    const userUid = this.currentUser.uid || '';
+    const userEmail = (this.currentUser.email || '').toLowerCase().trim();
+    const userUid = this.getUserId();
 
     const type = expenseData.type === 'income' ? 'income' : 'expense';
     const id = (type === 'income' ? 'inc_' : 'exp_') + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
@@ -429,7 +447,7 @@ class ExpenseDatabase {
       try {
         await this.firestore
           .collection('users')
-          .doc(this.currentUser.uid)
+          .doc(this.getUserId())
           .collection('expenses')
           .doc(id)
           .delete();
@@ -457,7 +475,7 @@ class ExpenseDatabase {
         try {
           await this.firestore
             .collection('users')
-            .doc(this.currentUser.uid)
+            .doc(this.getUserId())
             .collection('expenses')
             .doc(id)
             .update(updated);
@@ -477,8 +495,8 @@ class ExpenseDatabase {
       throw new Error('Please sign in with Google to manage assets.');
     }
 
-    const userEmail = this.currentUser.email || '';
-    const userUid = this.currentUser.uid || '';
+    const userEmail = (this.currentUser.email || '').toLowerCase().trim();
+    const userUid = this.getUserId();
     const id = 'ast_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
     const investedAmount = parseFloat(assetData.investedAmount) || 0;
     const currentValue = (assetData.currentValue !== undefined && !isNaN(parseFloat(assetData.currentValue))) ? parseFloat(assetData.currentValue) : investedAmount;
@@ -546,7 +564,7 @@ class ExpenseDatabase {
         try {
           await this.firestore
             .collection('users')
-            .doc(this.currentUser.uid)
+            .doc(this.getUserId())
             .collection('assets')
             .doc(id)
             .update(updated);
@@ -568,7 +586,7 @@ class ExpenseDatabase {
       try {
         await this.firestore
           .collection('users')
-          .doc(this.currentUser.uid)
+          .doc(this.getUserId())
           .collection('assets')
           .doc(id)
           .delete();
@@ -686,18 +704,25 @@ class ExpenseDatabase {
 
         this.auth.onAuthStateChanged(async (user) => {
           if (user) {
+            const email = (user.email || '').toLowerCase().trim();
             this.currentUser = {
-              uid: user.uid,
-              displayName: user.displayName || user.email.split('@')[0],
-              email: user.email || '',
+              uid: getCanonicalUserId(email),
+              displayName: user.displayName || email.split('@')[0],
+              email: email,
               photoURL: user.photoURL || `https://lh3.googleusercontent.com/a/default-user`,
               emailVerified: user.emailVerified || true
             };
             this.startFirestoreListener();
+            await this.saveLocalData();
+            this.notifyAuthListeners();
+            this.notifyListeners();
+          } else {
+            // User is not signed in via Firebase Auth SDK directly.
+            // If we have a cached logged-in user from local storage, retain it and keep cloud sync active!
+            if (this.currentUser && this.currentUser.email && !this.currentUser.isLocal) {
+              this.startFirestoreListener();
+            }
           }
-          await this.saveLocalData();
-          this.notifyAuthListeners();
-          this.notifyListeners();
         });
       } catch (e) {
         console.warn('Firebase init note:', e);
@@ -713,6 +738,9 @@ class ExpenseDatabase {
       const res = await window.googleAuthService.signInWithGoogleOAuth();
       if (res && res.success && res.user) {
         this.currentUser = res.user;
+        if (this.currentUser.email) {
+          this.currentUser.uid = getCanonicalUserId(this.currentUser.email);
+        }
         await this.saveLocalData();
         this.startFirestoreListener();
         this.notifyAuthListeners();
@@ -732,11 +760,11 @@ class ExpenseDatabase {
       try { await this.auth.signOut(); } catch (e) { }
     }
     if (this.firestoreUnsubscribe) {
-      this.firestoreUnsubscribe();
+      try { this.firestoreUnsubscribe(); } catch (e) {}
       this.firestoreUnsubscribe = null;
     }
     if (this.firestoreAssetUnsubscribe) {
-      this.firestoreAssetUnsubscribe();
+      try { this.firestoreAssetUnsubscribe(); } catch (e) {}
       this.firestoreAssetUnsubscribe = null;
     }
     this.currentUser = null;
@@ -746,22 +774,84 @@ class ExpenseDatabase {
   }
 
   startFirestoreListener() {
-    if (!this.firestore || !this.currentUser || this.currentUser.isLocal) return;
-    if (this.firestoreUnsubscribe) this.firestoreUnsubscribe();
-    if (this.firestoreAssetUnsubscribe) this.firestoreAssetUnsubscribe();
+    if (!this.firestore || !this.currentUser || !this.currentUser.email || this.currentUser.isLocal) return;
+    if (this.firestoreUnsubscribe) {
+      try { this.firestoreUnsubscribe(); } catch (e) {}
+      this.firestoreUnsubscribe = null;
+    }
+    if (this.firestoreAssetUnsubscribe) {
+      try { this.firestoreAssetUnsubscribe(); } catch (e) {}
+      this.firestoreAssetUnsubscribe = null;
+    }
 
+    const userId = this.getUserId();
+    if (!userId || userId === 'default_user') return;
+
+    const expensesRef = this.firestore.collection('users').doc(userId).collection('expenses');
+    const assetsRef = this.firestore.collection('users').doc(userId).collection('assets');
+
+    // 1. Instant direct fetch to populate immediately on refresh or device switch
+    expensesRef.orderBy('timestamp', 'desc').get().then(snapshot => {
+      const cloudExpenses = [];
+      snapshot.forEach(doc => {
+        cloudExpenses.push({ id: doc.id, ...doc.data() });
+      });
+
+      if (cloudExpenses.length > 0) {
+        // Merge with any unsynced local items that aren't in cloud yet
+        const cloudIds = new Set(cloudExpenses.map(e => e.id));
+        const unsynced = this.expenses.filter(e => !cloudIds.has(e.id));
+        unsynced.forEach(localItem => {
+          expensesRef.doc(localItem.id).set({
+            ...localItem,
+            userEmail: this.currentUser.email
+          }).catch(() => {});
+        });
+
+        this.expenses = [...unsynced, ...cloudExpenses].sort((a, b) => (b.timestamp || b.createdAt || 0) - (a.timestamp || a.createdAt || 0));
+        this.saveLocalData();
+        this.notifyListeners();
+      } else if (this.expenses.length > 0) {
+        // Cloud is empty for this user but local had items: upload them to cloud
+        this.expenses.forEach(localItem => {
+          expensesRef.doc(localItem.id).set({
+            ...localItem,
+            userEmail: this.currentUser.email
+          }).catch(() => {});
+        });
+      }
+    }).catch(err => {
+      console.warn('Initial Firestore expenses fetch note:', err);
+    });
+
+    assetsRef.orderBy('createdAt', 'desc').get().then(snapshot => {
+      const cloudAssets = [];
+      snapshot.forEach(doc => {
+        cloudAssets.push({ id: doc.id, ...doc.data() });
+      });
+      if (cloudAssets.length > 0) {
+        this.assets = cloudAssets;
+        this.saveLocalData();
+        this.notifyListeners();
+      }
+    }).catch(err => {
+      console.warn('Initial Firestore assets fetch note:', err);
+    });
+
+    // 2. Real-time live listener for updates from mobile and other tabs
     try {
-      this.firestoreUnsubscribe = this.firestore
-        .collection('users')
-        .doc(this.currentUser.uid)
-        .collection('expenses')
+      this.firestoreUnsubscribe = expensesRef
         .orderBy('timestamp', 'desc')
         .onSnapshot(snapshot => {
           const cloudExpenses = [];
           snapshot.forEach(doc => {
             cloudExpenses.push({ id: doc.id, ...doc.data() });
           });
-          if (cloudExpenses.length > 0) {
+          if (snapshot.size > 0 || (snapshot.empty && this.expenses.length === 0)) {
+            this.expenses = cloudExpenses;
+            this.saveLocalData();
+            this.notifyListeners();
+          } else if (cloudExpenses.length > 0) {
             this.expenses = cloudExpenses;
             this.saveLocalData();
             this.notifyListeners();
@@ -770,10 +860,7 @@ class ExpenseDatabase {
           console.warn('Firestore snapshot note:', err);
         });
 
-      this.firestoreAssetUnsubscribe = this.firestore
-        .collection('users')
-        .doc(this.currentUser.uid)
-        .collection('assets')
+      this.firestoreAssetUnsubscribe = assetsRef
         .orderBy('createdAt', 'desc')
         .onSnapshot(snapshot => {
           const cloudAssets = [];

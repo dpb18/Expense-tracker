@@ -85,18 +85,25 @@ const CURRENCIES = {
   SGD: { symbol: "S$", name: "Singapore Dollar (SGD)" }
 };
 
+function getCanonicalUserId(email) {
+  if (!email) return 'default_user';
+  return 'user_' + String(email).toLowerCase().trim().replace(/[^a-z0-9]/g, '_');
+}
+
 if (typeof window !== "undefined") {
   window.FIREBASE_CONFIG = FIREBASE_CONFIG;
   window.DEFAULT_SETTINGS = DEFAULT_SETTINGS;
   window.CURRENCIES = CURRENCIES;
+  window.getCanonicalUserId = getCanonicalUserId;
 }
 
 if (typeof global !== "undefined") {
   global.FIREBASE_CONFIG = FIREBASE_CONFIG;
   global.DEFAULT_SETTINGS = DEFAULT_SETTINGS;
   global.CURRENCIES = CURRENCIES;
+  global.getCanonicalUserId = getCanonicalUserId;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { FIREBASE_CONFIG, DEFAULT_SETTINGS, CURRENCIES };
+  module.exports = { FIREBASE_CONFIG, DEFAULT_SETTINGS, CURRENCIES, getCanonicalUserId };
 }

@@ -103,11 +103,13 @@ class GoogleAuthService {
 
         const result = await firebase.auth().signInWithPopup(provider);
         if (result && result.user) {
+          const email = (result.user.email || '').toLowerCase().trim();
+          const uid = typeof getCanonicalUserId === 'function' ? getCanonicalUserId(email) : ('user_' + email.replace(/[^a-z0-9]/g, '_'));
           const user = {
-            uid: result.user.uid,
-            email: result.user.email.toLowerCase(),
-            displayName: result.user.displayName || result.user.email.split('@')[0],
-            photoURL: result.user.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(result.user.displayName || result.user.email)}&backgroundColor=6366f1,8b5cf6`,
+            uid: uid,
+            email: email,
+            displayName: result.user.displayName || email.split('@')[0],
+            photoURL: result.user.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(result.user.displayName || email)}&backgroundColor=6366f1,8b5cf6`,
             emailVerified: true,
             authProvider: 'accounts.google.com'
           };
@@ -124,8 +126,9 @@ class GoogleAuthService {
     const inputEmail = window.prompt('Enter your Google / Gmail account to authenticate:');
     if (inputEmail && inputEmail.includes('@')) {
       const email = inputEmail.trim().toLowerCase();
+      const uid = typeof getCanonicalUserId === 'function' ? getCanonicalUserId(email) : ('user_' + email.replace(/[^a-z0-9]/g, '_'));
       const user = {
-        uid: 'goog_' + btoa(email).replace(/[^a-zA-Z0-9]/g, '').slice(0, 20),
+        uid: uid,
         email: email,
         displayName: email.split('@')[0],
         photoURL: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}&backgroundColor=6366f1,8b5cf6`,

@@ -11,24 +11,25 @@ import {
   deleteDoc, 
   onSnapshot, 
   query, 
-  orderBy 
+  orderBy,
+  getDocs
 } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyB_DEMO_EXPENSE_SYNC_KEY",
+  apiKey: "AIzaSyDDTPqBvDm7nraufcBwZG6cZi4_nVJmdtY",
   authDomain: "spentify-tracker.firebaseapp.com",
   projectId: "spentify-tracker",
-  storageBucket: "spentify-tracker.appspot.com",
-  messagingSenderId: "123456789012",
-  appId: "1:123456789012:web:abcdef1234567890"
+  storageBucket: "spentify-tracker.firebasestorage.app",
+  messagingSenderId: "795271930013",
+  appId: "1:795271930013:web:a0366396bffc76caa8b474"
 };
 
 let app;
 let db = null;
 
 try {
-  if (FIREBASE_CONFIG.apiKey && !FIREBASE_CONFIG.apiKey.includes('REPLACE-ME')) {
+  if (FIREBASE_CONFIG.apiKey) {
     app = !getApps().length ? initializeApp(FIREBASE_CONFIG) : getApp();
     db = getFirestore(app);
   }
@@ -38,6 +39,11 @@ try {
 
 const STORAGE_KEY = 'spentify_mobile_expenses';
 const USER_KEY = 'spentify_mobile_user';
+
+export function getCanonicalUserId(email) {
+  if (!email) return 'default_user';
+  return 'user_' + email.toLowerCase().trim().replace(/[^a-z0-9]/g, '_');
+}
 
 export const DEFAULT_CATEGORIES = [
   { id: "food", name: "Food & Dining", icon: "🍔", color: "#f59e0b" },
@@ -63,7 +69,7 @@ export const DEFAULT_INCOME_CATEGORIES = [
 
 export const DEFAULT_PAYMENTS = [
   { id: "upi", name: "UPI / GPay", icon: "⚡" },
-  { id: "card", name: "Card", icon: "💳" },
+  { id: "card", name: "Card / Credit", icon: "💳" },
   { id: "cash", name: "Cash", icon: "💵" },
   { id: "bank", name: "Net Banking", icon: "🏦" }
 ];
@@ -105,21 +111,26 @@ export async function saveLocalExpenses(expenses) {
 }
 
 export async function addExpense(expense, user) {
-  const id = 'exp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+  const type = expense.type === 'income' ? 'income' : 'expense';
+  const prefix = type === 'income' ? 'inc_' : 'exp_';
+  const id = prefix + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
   const now = new Date();
   const dateStr = expense.date || now.toISOString().split('T')[0];
   const timeStr = expense.time || now.toTimeString().split(' ')[0].substr(0, 5);
+  const userEmail = (user?.email || '').toLowerCase().trim();
 
   const newEntry = {
     id,
+    type,
     amount: parseFloat(expense.amount) || 0,
-    title: expense.title.trim(),
-    category: expense.category || 'other',
-    paymentMethod: expense.paymentMethod || 'upi',
+    title: (expense.title || (type === 'income' ? 'Income' : 'Expense')).trim(),
+    category: expense.category || (type === 'income' ? 'salary' : 'other'),
+    paymentMethod: expense.paymentMethod || (type === 'income' ? 'bank' : 'upi'),
     date: dateStr,
     time: timeStr,
     timestamp: new Date(`${dateStr}T${timeStr}:00`).getTime() || Date.now(),
     notes: (expense.notes || '').trim(),
+    userEmail,
     source: 'mobile_app',
     createdAt: Date.now()
   };
@@ -128,7 +139,7 @@ export async function addExpense(expense, user) {
   current.unshift(newEntry);
   await saveLocalExpenses(current);
 
-  const uid = user ? user.uid : 'default_user';
+  const uid = userEmail ? getCanonicalUserId(userEmail) : (user?.uid || 'default_user');
   if (db && uid) {
     try {
       await setDoc(doc(db, 'users', uid, 'expenses', id), newEntry);
@@ -145,7 +156,8 @@ export async function deleteExpense(id, user) {
   const filtered = current.filter(e => e.id !== id);
   await saveLocalExpenses(filtered);
 
-  const uid = user ? user.uid : 'default_user';
+  const userEmail = (user?.email || '').toLowerCase().trim();
+  const uid = userEmail ? getCanonicalUserId(userEmail) : (user?.uid || 'default_user');
   if (db && uid) {
     try {
       await deleteDoc(doc(db, 'users', uid, 'expenses', id));
@@ -156,22 +168,32 @@ export async function deleteExpense(id, user) {
 }
 
 export function subscribeToCloudExpenses(user, onUpdate) {
-  const uid = user ? user.uid : 'default_user';
-  if (!db || !uid) return () => {};
+  const userEmail = (user?.email || '').toLowerCase().trim();
+  const uid = userEmail ? getCanonicalUserId(userEmail) : (user?.uid || 'default_user');
+  if (!db || !uid || uid === 'default_user') return () => {};
 
   try {
-    const q = query(
-      collection(db, 'users', uid, 'expenses'),
-      orderBy('timestamp', 'desc')
-    );
+    const expensesCol = collection(db, 'users', uid, 'expenses');
+    const q = query(expensesCol, orderBy('timestamp', 'desc'));
 
-    return onSnapshot(q, (snapshot) => {
+    // Instant direct fetch for immediate UI population
+    getDocs(q).then((snapshot) => {
       const list = [];
       snapshot.forEach(d => list.push({ id: d.id, ...d.data() }));
       if (list.length > 0) {
         saveLocalExpenses(list);
         onUpdate(list);
       }
+    }).catch(err => {
+      console.warn('Mobile initial fetch note:', err);
+    });
+
+    // Real-time live listener
+    return onSnapshot(q, (snapshot) => {
+      const list = [];
+      snapshot.forEach(d => list.push({ id: d.id, ...d.data() }));
+      saveLocalExpenses(list);
+      onUpdate(list);
     }, (err) => {
       console.warn('Mobile snapshot listener info:', err);
     });

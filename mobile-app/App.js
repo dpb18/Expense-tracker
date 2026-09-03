@@ -18,7 +18,9 @@ import {
   addExpense,
   deleteExpense,
   subscribeToCloudExpenses,
+  getCanonicalUserId,
   DEFAULT_CATEGORIES,
+  DEFAULT_INCOME_CATEGORIES,
   DEFAULT_PAYMENTS
 } from './src/firebase';
 
@@ -34,6 +36,7 @@ export default function App() {
   const [googleEmailInput, setGoogleEmailInput] = useState('');
 
   // Form State
+  const [txnType, setTxnType] = useState('expense'); // 'expense' or 'income'
   const [amount, setAmount] = useState('');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('food');
@@ -62,13 +65,13 @@ export default function App() {
 
   async function loadExpenses() {
     const list = await getLocalExpenses();
-    if (list.length === 0) {
-      // Seed Indian Rupee sample data
+    if (list.length === 0 && !user) {
+      // Seed Indian Rupee sample data only if no user
       const sample = [
-        { id: '1', title: 'Chai & Samosa Break', amount: 60, category: 'food', paymentMethod: 'upi', date: new Date().toISOString().split('T')[0], time: '10:15' },
-        { id: '2', title: 'Swiggy Thali Lunch', amount: 240, category: 'food', paymentMethod: 'upi', date: new Date().toISOString().split('T')[0], time: '13:30' },
-        { id: '3', title: 'Auto Rickshaw to Office', amount: 80, category: 'transport', paymentMethod: 'cash', date: new Date().toISOString().split('T')[0], time: '09:00' },
-        { id: '4', title: 'BigBasket Weekly Groceries', amount: 1450, category: 'groceries', paymentMethod: 'upi', date: new Date().toISOString().split('T')[0], time: '18:30' }
+        { id: '1', type: 'expense', title: 'Chai & Samosa Break', amount: 60, category: 'food', paymentMethod: 'upi', date: new Date().toISOString().split('T')[0], time: '10:15' },
+        { id: '2', type: 'expense', title: 'Swiggy Thali Lunch', amount: 240, category: 'food', paymentMethod: 'upi', date: new Date().toISOString().split('T')[0], time: '13:30' },
+        { id: '3', type: 'expense', title: 'Auto Rickshaw to Office', amount: 80, category: 'transport', paymentMethod: 'cash', date: new Date().toISOString().split('T')[0], time: '09:00' },
+        { id: '4', type: 'expense', title: 'BigBasket Weekly Groceries', amount: 1450, category: 'groceries', paymentMethod: 'upi', date: new Date().toISOString().split('T')[0], time: '18:30' }
       ];
       setExpenses(sample);
     } else {
@@ -77,26 +80,45 @@ export default function App() {
   }
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayTotal = expenses
-    .filter(e => e.date === todayStr)
+  const todaySpend = expenses
+    .filter(e => (e.type || 'expense') !== 'income' && e.date === todayStr)
     .reduce((sum, e) => sum + (e.amount || 0), 0);
 
-  const monthTotal = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-  const budgetRemaining = Math.max(0, monthlyBudget - monthTotal);
-  const budgetPct = Math.min(100, Math.round((monthTotal / monthlyBudget) * 100));
+  const monthSpend = expenses
+    .filter(e => (e.type || 'expense') !== 'income')
+    .reduce((sum, e) => sum + (e.amount || 0), 0);
+
+  const monthIncome = expenses
+    .filter(e => e.type === 'income')
+    .reduce((sum, e) => sum + (e.amount || 0), 0);
+
+  const netBalance = monthIncome - monthSpend;
+  const budgetRemaining = Math.max(0, monthlyBudget - monthSpend);
+  const budgetPct = Math.min(100, Math.round((monthSpend / monthlyBudget) * 100));
+
+  function openAddModal(type = 'expense') {
+    setTxnType(type);
+    setCategory(type === 'income' ? 'salary' : 'food');
+    setPaymentMethod(type === 'income' ? 'bank' : 'upi');
+    setAmount('');
+    setTitle('');
+    setNotes('');
+    setIsAddModalOpen(true);
+  }
 
   async function handleSaveExpense() {
     const num = parseFloat(amount);
     if (isNaN(num) || num <= 0) {
-      Alert.alert('Invalid Amount', 'Please enter a valid expense amount.');
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
       return;
     }
     if (!title.trim()) {
-      Alert.alert('Missing Title', 'Please enter what this expense was for (e.g. Chai, Auto, Lunch).');
+      Alert.alert('Missing Title', `Please enter what this ${txnType} was for.`);
       return;
     }
 
     const newEntry = await addExpense({
+      type: txnType,
       amount: num,
       title: title.trim(),
       category,
@@ -117,14 +139,14 @@ export default function App() {
   }
 
   async function handleGoogleLogin(customEmail = null) {
-    const email = (customEmail || googleEmailInput || '').trim();
+    const email = (customEmail || googleEmailInput || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       Alert.alert('Invalid Email', 'Please enter a valid Google Account email.');
       return;
     }
     const name = email.split('@')[0];
     const loggedUser = {
-      uid: 'goog_' + email.replace(/[^a-zA-Z0-9]/g, '_'),
+      uid: getCanonicalUserId(email),
       email: email,
       displayName: name,
       photoURL: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(name)}&backgroundColor=6366f1,8b5cf6`,
@@ -133,7 +155,7 @@ export default function App() {
     await saveLocalUser(loggedUser);
     setUser(loggedUser);
     setIsGoogleModalOpen(false);
-    Alert.alert('Google Sync Active', `Logged in as ${loggedUser.displayName} (${email}). All expenses will sync with your Chrome Extension!`);
+    Alert.alert('Google Sync Active', `Logged in as ${loggedUser.displayName} (${email}). All expenses & income are now linked with your Laptop!`);
   }
 
   async function handleGoogleLogout() {
@@ -142,6 +164,8 @@ export default function App() {
     setGoogleEmailInput('');
     setIsGoogleModalOpen(false);
   }
+
+  const currentCategories = txnType === 'income' ? DEFAULT_INCOME_CATEGORIES : DEFAULT_CATEGORIES;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -157,7 +181,7 @@ export default function App() {
           </View>
         </View>
         <TouchableOpacity
-          style={styles.googleSyncPill}
+          style={[styles.googleSyncPill, user ? styles.googleSyncPillActive : null]}
           onPress={() => setIsGoogleModalOpen(true)}
           activeOpacity={0.8}
         >
@@ -172,68 +196,107 @@ export default function App() {
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
         {activeTab === 'home' && (
           <>
-            {/* Today Spend Hero Card */}
+            {/* Net Balance / Hero Card */}
             <View style={styles.heroCard}>
-              <Text style={styles.heroLabel}>TODAY'S SPENDING</Text>
-              <Text style={styles.heroAmount}>{currencySymbol}{Math.round(todayTotal).toLocaleString('en-IN')}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.heroLabel}>NET SAVINGS / BALANCE</Text>
+                <Text style={[styles.netTag, netBalance >= 0 ? styles.statusSuccess : styles.statusDanger]}>
+                  {netBalance >= 0 ? 'Surplus' : 'Deficit'}
+                </Text>
+              </View>
+              <Text style={[styles.heroAmount, { color: netBalance >= 0 ? '#10b981' : '#ef4444' }]}>
+                {netBalance >= 0 ? '+' : ''}{currencySymbol}{Math.round(netBalance).toLocaleString('en-IN')}
+              </Text>
               <View style={styles.heroFooter}>
-                <Text style={styles.heroSub}>Daily Target: {currencySymbol}{dailyBudget}</Text>
-                <Text style={[styles.heroStatus, todayTotal > dailyBudget ? styles.statusDanger : styles.statusSuccess]}>
-                  {todayTotal > dailyBudget ? 'Over daily limit' : `${currencySymbol}${Math.round(dailyBudget - todayTotal)} left`}
+                <Text style={styles.heroSub}>Today's Spend: {currencySymbol}{Math.round(todaySpend).toLocaleString('en-IN')}</Text>
+                <Text style={[styles.heroStatus, todaySpend > dailyBudget ? styles.statusDanger : styles.statusSuccess]}>
+                  {todaySpend > dailyBudget ? 'Over daily limit' : `${currencySymbol}${Math.round(dailyBudget - todaySpend)} left today`}
                 </Text>
               </View>
             </View>
 
-            {/* Quick KPI Row */}
+            {/* Quick KPI Row: Month Spend & Month Income */}
             <View style={styles.kpiRow}>
               <View style={styles.kpiBox}>
-                <Text style={styles.kpiBoxLabel}>MONTHLY SPEND</Text>
-                <Text style={styles.kpiBoxVal}>{currencySymbol}{Math.round(monthTotal).toLocaleString('en-IN')}</Text>
+                <Text style={styles.kpiBoxLabel}>TOTAL INCOME</Text>
+                <Text style={[styles.kpiBoxVal, { color: '#10b981' }]}>
+                  +{currencySymbol}{Math.round(monthIncome).toLocaleString('en-IN')}
+                </Text>
               </View>
               <View style={styles.kpiBox}>
-                <Text style={styles.kpiBoxLabel}>BUDGET LEFT</Text>
-                <Text style={[styles.kpiBoxVal, { color: '#10b981' }]}>{currencySymbol}{Math.round(budgetRemaining).toLocaleString('en-IN')}</Text>
+                <Text style={styles.kpiBoxLabel}>MONTHLY SPEND</Text>
+                <Text style={[styles.kpiBoxVal, { color: '#f43f5e' }]}>
+                  -{currencySymbol}{Math.round(monthSpend).toLocaleString('en-IN')}
+                </Text>
               </View>
             </View>
 
             {/* Budget Progress Bar */}
             <View style={styles.budgetCard}>
               <View style={styles.budgetCardHeader}>
-                <Text style={styles.budgetCardTitle}>Monthly Target (₹{monthlyBudget.toLocaleString('en-IN')})</Text>
+                <Text style={styles.budgetCardTitle}>Monthly Budget Limit (₹{monthlyBudget.toLocaleString('en-IN')})</Text>
                 <Text style={styles.budgetCardPct}>{budgetPct}% Used</Text>
               </View>
               <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${budgetPct}%` }]} />
+                <View style={[styles.progressFill, { width: `${budgetPct}%`, backgroundColor: budgetPct > 90 ? '#ef4444' : '#6366f1' }]} />
               </View>
             </View>
 
-            {/* Recent Expenses List */}
+            {/* Quick Add Buttons Row */}
+            <View style={styles.quickAddRow}>
+              <TouchableOpacity
+                style={[styles.quickAddBtn, { backgroundColor: '#4f46e5' }]}
+                onPress={() => openAddModal('expense')}
+              >
+                <Text style={styles.quickAddBtnText}>+ Log Expense</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.quickAddBtn, { backgroundColor: '#059669' }]}
+                onPress={() => openAddModal('income')}
+              >
+                <Text style={styles.quickAddBtnText}>+ Log Income</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Recent Transactions List */}
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Recent Expenses</Text>
+              <Text style={styles.sectionTitle}>Recent Transactions</Text>
               <Text style={styles.sectionCount}>{expenses.length} entries</Text>
             </View>
 
-            {expenses.slice(0, 10).map(item => {
-              const cat = DEFAULT_CATEGORIES.find(c => c.id === item.category) || { icon: '📦', name: 'Other' };
-              const pay = DEFAULT_PAYMENTS.find(p => p.id === item.paymentMethod) || { icon: '⚡', name: 'UPI' };
-              return (
-                <View key={item.id} style={styles.transactionCard}>
-                  <View style={styles.txLeft}>
-                    <Text style={styles.txIcon}>{cat.icon}</Text>
-                    <View>
-                      <Text style={styles.txTitle}>{item.title}</Text>
-                      <Text style={styles.txMeta}>{item.date} • {pay.name}</Text>
+            {expenses.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyIcon}>📝</Text>
+                <Text style={styles.emptyTitle}>No Transactions Yet</Text>
+                <Text style={styles.emptySub}>Log an expense or income to start tracking and syncing with your laptop.</Text>
+              </View>
+            ) : (
+              expenses.slice(0, 15).map(item => {
+                const isIncome = item.type === 'income';
+                const cats = isIncome ? DEFAULT_INCOME_CATEGORIES : DEFAULT_CATEGORIES;
+                const cat = cats.find(c => c.id === item.category) || { icon: isIncome ? '💰' : '📦', name: 'Other' };
+                const pay = DEFAULT_PAYMENTS.find(p => p.id === item.paymentMethod) || { icon: '⚡', name: 'UPI' };
+                return (
+                  <View key={item.id} style={styles.transactionCard}>
+                    <View style={styles.txLeft}>
+                      <Text style={styles.txIcon}>{cat.icon}</Text>
+                      <View>
+                        <Text style={styles.txTitle}>{item.title}</Text>
+                        <Text style={styles.txMeta}>{item.date} • {pay.name} {item.source === 'chrome_popup' ? '• 💻' : ''}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.txRight}>
+                      <Text style={[styles.txAmount, isIncome ? styles.incomeAmount : styles.expenseAmount]}>
+                        {isIncome ? '+' : '-'}{currencySymbol}{Math.round(item.amount || 0).toLocaleString('en-IN')}
+                      </Text>
+                      <TouchableOpacity onPress={() => handleDeleteExpense(item.id)}>
+                        <Text style={styles.txDeleteBtn}>✕</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
-                  <View style={styles.txRight}>
-                    <Text style={styles.txAmount}>-{currencySymbol}{Math.round(item.amount || 0).toLocaleString('en-IN')}</Text>
-                    <TouchableOpacity onPress={() => handleDeleteExpense(item.id)}>
-                      <Text style={styles.txDeleteBtn}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })}
+                );
+              })
+            )}
           </>
         )}
 
@@ -242,10 +305,10 @@ export default function App() {
             <Text style={styles.sectionTitle}>Category Spending Breakdown</Text>
             {DEFAULT_CATEGORIES.map(cat => {
               const catTotal = expenses
-                .filter(e => e.category === cat.id)
+                .filter(e => (e.type || 'expense') !== 'income' && e.category === cat.id)
                 .reduce((s, e) => s + (e.amount || 0), 0);
               if (catTotal === 0) return null;
-              const pct = monthTotal > 0 ? Math.round((catTotal / monthTotal) * 100) : 0;
+              const pct = monthSpend > 0 ? Math.round((catTotal / monthSpend) * 100) : 0;
               return (
                 <View key={cat.id} style={styles.analyticsRow}>
                   <View style={styles.analyticsLeft}>
@@ -271,9 +334,16 @@ export default function App() {
             >
               <Text style={styles.settingLabel}>Google Account</Text>
               <Text style={[styles.settingVal, { color: '#6366f1' }]}>
-                {user ? user.email : 'Tap to sign in with Google'}
+                {user ? `✅ Connected: ${user.email}` : 'Tap to sign in with Google'}
               </Text>
             </TouchableOpacity>
+
+            <View style={styles.settingCard}>
+              <Text style={styles.settingLabel}>Synced Device Identifier</Text>
+              <Text style={[styles.settingVal, { color: '#94a3b8', fontSize: 12 }]}>
+                {user ? user.uid : 'Sign in to link devices'}
+              </Text>
+            </View>
 
             <View style={styles.settingCard}>
               <Text style={styles.settingLabel}>Currency</Text>
@@ -282,22 +352,22 @@ export default function App() {
 
             <View style={styles.settingCard}>
               <Text style={styles.settingLabel}>Monthly Budget Limit</Text>
-              <Text style={styles.settingVal}>₹25,000</Text>
+              <Text style={styles.settingVal}>₹{monthlyBudget.toLocaleString('en-IN')}</Text>
             </View>
 
             <View style={styles.settingCard}>
               <Text style={styles.settingLabel}>Daily Soft Budget</Text>
-              <Text style={styles.settingVal}>₹800 / day</Text>
+              <Text style={styles.settingVal}>₹{dailyBudget} / day</Text>
             </View>
           </View>
         )}
       </ScrollView>
 
-      {/* Floating Action Button (Add Expense) */}
+      {/* Floating Action Button */}
       <TouchableOpacity
         style={styles.fab}
         activeOpacity={0.85}
-        onPress={() => setIsAddModalOpen(true)}
+        onPress={() => openAddModal('expense')}
       >
         <Text style={styles.fabIcon}>+</Text>
       </TouchableOpacity>
@@ -329,7 +399,7 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Add Expense Modal */}
+      {/* Add Transaction Modal */}
       <Modal
         visible={isAddModalOpen}
         animationType="slide"
@@ -339,9 +409,25 @@ export default function App() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Log Expense</Text>
+              <Text style={styles.modalTitle}>{txnType === 'income' ? 'Log Income' : 'Log Expense'}</Text>
               <TouchableOpacity onPress={() => setIsAddModalOpen(false)}>
                 <Text style={styles.modalCloseBtn}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Type Switcher */}
+            <View style={styles.typeSwitcher}>
+              <TouchableOpacity
+                style={[styles.typeBtn, txnType === 'expense' && styles.typeBtnActiveExpense]}
+                onPress={() => { setTxnType('expense'); setCategory('food'); }}
+              >
+                <Text style={[styles.typeBtnText, txnType === 'expense' && styles.typeBtnTextActive]}>💸 Expense</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.typeBtn, txnType === 'income' && styles.typeBtnActiveIncome]}
+                onPress={() => { setTxnType('income'); setCategory('salary'); }}
+              >
+                <Text style={[styles.typeBtnText, txnType === 'income' && styles.typeBtnTextActive]}>💰 Income</Text>
               </TouchableOpacity>
             </View>
 
@@ -349,7 +435,7 @@ export default function App() {
               {/* Amount Input */}
               <Text style={styles.inputLabel}>AMOUNT (₹)</Text>
               <View style={styles.amountInputRow}>
-                <Text style={styles.currencyPrefix}>{currencySymbol}</Text>
+                <Text style={[styles.currencyPrefix, txnType === 'income' ? { color: '#10b981' } : { color: '#6366f1' }]}>{currencySymbol}</Text>
                 <TextInput
                   style={styles.amountInput}
                   keyboardType="number-pad"
@@ -365,7 +451,7 @@ export default function App() {
               <Text style={styles.inputLabel}>WHAT WAS THIS FOR?</Text>
               <TextInput
                 style={styles.textInput}
-                placeholder="e.g. Chai, Swiggy, Auto, Petrol..."
+                placeholder={txnType === 'income' ? "e.g. Salary, Freelance, Dividend, Gift..." : "e.g. Chai, Swiggy, Auto, Petrol..."}
                 placeholderTextColor="#64748b"
                 value={title}
                 onChangeText={setTitle}
@@ -374,7 +460,7 @@ export default function App() {
               {/* Category Picker */}
               <Text style={styles.inputLabel}>CATEGORY</Text>
               <View style={styles.categoryGrid}>
-                {DEFAULT_CATEGORIES.map(cat => (
+                {currentCategories.map(cat => (
                   <TouchableOpacity
                     key={cat.id}
                     style={[styles.catBtn, category === cat.id && styles.catBtnActive]}
@@ -387,7 +473,7 @@ export default function App() {
               </View>
 
               {/* Payment Method */}
-              <Text style={styles.inputLabel}>PAYMENT METHOD</Text>
+              <Text style={styles.inputLabel}>{txnType === 'income' ? 'RECEIVED IN' : 'PAYMENT METHOD'}</Text>
               <View style={styles.paymentRow}>
                 {DEFAULT_PAYMENTS.map(pay => (
                   <TouchableOpacity
@@ -404,7 +490,7 @@ export default function App() {
               <Text style={styles.inputLabel}>NOTES (OPTIONAL)</Text>
               <TextInput
                 style={styles.textInput}
-                placeholder="Optional tags like #work, #treat..."
+                placeholder="Optional notes or tags..."
                 placeholderTextColor="#64748b"
                 value={notes}
                 onChangeText={setNotes}
@@ -412,11 +498,13 @@ export default function App() {
 
               {/* Submit Button */}
               <TouchableOpacity
-                style={styles.submitBtn}
+                style={[styles.submitBtn, txnType === 'income' ? { backgroundColor: '#059669' } : { backgroundColor: '#6366f1' }]}
                 activeOpacity={0.8}
                 onPress={handleSaveExpense}
               >
-                <Text style={styles.submitBtnText}>Log Expense (₹{amount || '0'})</Text>
+                <Text style={styles.submitBtnText}>
+                  {txnType === 'income' ? `Log Income (+₹${amount || '0'})` : `Log Expense (-₹${amount || '0'})`}
+                </Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -434,7 +522,7 @@ export default function App() {
           <View style={styles.googleModalBox}>
             <Text style={styles.googleModalTitle}>Google Account Sync</Text>
             <Text style={styles.googleModalSub}>
-              Use the same Google email as your Chrome Extension to sync all your laptop & mobile expenses seamlessly in real time.
+              Use the exact same Google / Gmail account as your laptop or Chrome Extension. Both devices will link together and sync all expenses & income instantly!
             </Text>
 
             <TextInput
@@ -448,27 +536,28 @@ export default function App() {
             />
 
             <View style={styles.googleModalBtns}>
-              {user ? (
+              <TouchableOpacity
+                style={[styles.googleBtn, styles.googleSaveBtn]}
+                onPress={() => handleGoogleLogin()}
+              >
+                <Text style={styles.googleBtnText}>Link Account</Text>
+              </TouchableOpacity>
+
+              {user && (
                 <TouchableOpacity
                   style={[styles.googleBtn, styles.googleLogoutBtn]}
                   onPress={handleGoogleLogout}
                 >
                   <Text style={styles.googleBtnText}>Sign Out</Text>
                 </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity
-                style={[styles.googleBtn, styles.googleSaveBtn]}
-                onPress={handleGoogleLogin}
-              >
-                <Text style={styles.googleBtnText}>{user ? 'Update Account' : 'Sign In & Sync'}</Text>
-              </TouchableOpacity>
+              )}
             </View>
 
             <TouchableOpacity
               style={styles.googleCloseBtn}
               onPress={() => setIsGoogleModalOpen(false)}
             >
-              <Text style={styles.googleCloseText}>Cancel</Text>
+              <Text style={styles.googleCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -489,9 +578,9 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1e293b'
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  brandIcon: { fontSize: 26 },
+  brandIcon: { fontSize: 24 },
   brandTitle: { fontSize: 18, fontWeight: '800', color: '#ffffff' },
-  brandSub: { fontSize: 11, color: '#94a3b8' },
+  brandSub: { fontSize: 11, color: '#64748b' },
   googleSyncPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -502,6 +591,10 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#334155'
+  },
+  googleSyncPillActive: {
+    borderColor: '#10b981',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)'
   },
   googleG: {
     fontSize: 11,
@@ -526,7 +619,8 @@ const styles = StyleSheet.create({
     marginBottom: 16
   },
   heroLabel: { fontSize: 11, fontWeight: '700', color: '#94a3b8', letterSpacing: 0.5 },
-  heroAmount: { fontSize: 34, fontWeight: '900', color: '#ffffff', marginVertical: 4 },
+  netTag: { fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: '#1e293b' },
+  heroAmount: { fontSize: 32, fontWeight: '900', marginVertical: 4 },
   heroFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
   heroSub: { fontSize: 12, color: '#64748b' },
   heroStatus: { fontSize: 12, fontWeight: '600' },
@@ -542,23 +636,43 @@ const styles = StyleSheet.create({
     borderColor: '#1e293b'
   },
   kpiBoxLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', letterSpacing: 0.5 },
-  kpiBoxVal: { fontSize: 18, fontWeight: '800', color: '#ffffff', marginTop: 4 },
+  kpiBoxVal: { fontSize: 18, fontWeight: '800', marginTop: 4 },
   budgetCard: {
     backgroundColor: '#111827',
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
     borderColor: '#1e293b',
-    marginBottom: 20
+    marginBottom: 16
   },
   budgetCardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
   budgetCardTitle: { fontSize: 13, fontWeight: '600', color: '#cbd5e1' },
   budgetCardPct: { fontSize: 12, fontWeight: '700', color: '#6366f1' },
   progressTrack: { height: 6, backgroundColor: '#1e293b', borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: '#6366f1', borderRadius: 3 },
+  progressFill: { height: '100%', borderRadius: 3 },
+  quickAddRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+  quickAddBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  quickAddBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 13 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: '#ffffff' },
   sectionCount: { fontSize: 12, color: '#64748b' },
+  emptyCard: {
+    backgroundColor: '#111827',
+    borderRadius: 12,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  emptyIcon: { fontSize: 32, marginBottom: 8 },
+  emptyTitle: { color: '#ffffff', fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  emptySub: { color: '#64748b', fontSize: 12, textAlign: 'center' },
   transactionCard: {
     backgroundColor: '#111827',
     borderRadius: 12,
@@ -575,7 +689,9 @@ const styles = StyleSheet.create({
   txTitle: { fontSize: 14, fontWeight: '600', color: '#ffffff' },
   txMeta: { fontSize: 11, color: '#64748b', marginTop: 2 },
   txRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  txAmount: { fontSize: 14, fontWeight: '700', color: '#ffffff' },
+  txAmount: { fontSize: 14, fontWeight: '700' },
+  incomeAmount: { color: '#10b981' },
+  expenseAmount: { color: '#f43f5e' },
   txDeleteBtn: { color: '#64748b', fontSize: 14, padding: 4 },
   analyticsRow: {
     flexDirection: 'row',
@@ -649,9 +765,37 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1e293b'
   },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   modalTitle: { fontSize: 18, fontWeight: '700', color: '#ffffff' },
   modalCloseBtn: { fontSize: 18, color: '#64748b', padding: 4 },
+  typeSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 12
+  },
+  typeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8
+  },
+  typeBtnActiveExpense: {
+    backgroundColor: '#ef4444'
+  },
+  typeBtnActiveIncome: {
+    backgroundColor: '#10b981'
+  },
+  typeBtnText: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontWeight: '600'
+  },
+  typeBtnTextActive: {
+    color: '#ffffff',
+    fontWeight: '800'
+  },
   inputLabel: { fontSize: 11, fontWeight: '700', color: '#94a3b8', marginTop: 12, marginBottom: 6, letterSpacing: 0.5 },
   amountInputRow: {
     flexDirection: 'row',
@@ -662,7 +806,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#263354'
   },
-  currencyPrefix: { fontSize: 24, fontWeight: '700', color: '#6366f1', marginRight: 6 },
+  currencyPrefix: { fontSize: 24, fontWeight: '700', marginRight: 6 },
   amountInput: { flex: 1, height: 48, fontSize: 24, fontWeight: '700', color: '#ffffff' },
   textInput: {
     backgroundColor: '#1a233a',
@@ -704,7 +848,6 @@ const styles = StyleSheet.create({
   payBtnActive: { backgroundColor: 'rgba(139, 92, 246, 0.25)', borderColor: '#8b5cf6' },
   payBtnText: { fontSize: 11, color: '#cbd5e1', fontWeight: '600' },
   submitBtn: {
-    backgroundColor: '#6366f1',
     borderRadius: 12,
     height: 48,
     alignItems: 'center',

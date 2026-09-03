@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function handleAuthSuccess(userData) {
     const email = (userData.email || '').toLowerCase().trim();
     const displayName = userData.displayName || email.split('@')[0];
-    const uid = userData.uid || ('goog_' + btoa(email).replace(/[^a-zA-Z0-9]/g, '').slice(0, 20));
+    const uid = (typeof getCanonicalUserId === 'function' ? getCanonicalUserId(email) : ('user_' + email.replace(/[^a-z0-9]/g, '_')));
     
     const user = {
       uid: uid,
@@ -123,7 +123,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         if (profileInfo && profileInfo.email) {
           handleAuthSuccess({
-            uid: 'goog_' + (profileInfo.id || profileInfo.email.replace(/[^a-zA-Z0-9]/g, '_')),
             email: profileInfo.email,
             displayName: profileInfo.email.split('@')[0]
           });
@@ -145,7 +144,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const result = await firebase.auth().signInWithPopup(provider);
         if (result && result.user) {
           handleAuthSuccess({
-            uid: result.user.uid,
             email: result.user.email,
             displayName: result.user.displayName,
             photoURL: result.user.photoURL,
