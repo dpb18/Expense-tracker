@@ -417,7 +417,8 @@ class ExpenseDatabase {
       notes: (expenseData.notes || '').trim(),
       source: expenseData.source || 'chrome_popup',
       userEmail,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      pendingCloudSync: true
     };
 
     this.expenses.unshift(newExpense);
@@ -431,6 +432,10 @@ class ExpenseDatabase {
         .collection('expenses')
         .doc(id)
         .set(newExpense)
+        .then(() => {
+          delete newExpense.pendingCloudSync;
+          this.saveLocalData();
+        })
         .catch(err => {
           console.warn('Cloud Firestore sync pending (offline):', err);
         });
@@ -446,17 +451,27 @@ class ExpenseDatabase {
 
   async deleteExpense(id) {
     this.expenses = this.expenses.filter(item => item.id !== id);
+
+    try {
+      const deletedIds = JSON.parse(localStorage.getItem('spentify_deleted_ids') || '[]');
+      if (!deletedIds.includes(id)) {
+        deletedIds.push(id);
+        localStorage.setItem('spentify_deleted_ids', JSON.stringify(deletedIds.slice(-500)));
+      }
+    } catch (e) {}
+
     await this.saveLocalData();
     this.notifyListeners();
 
-    if (this.firestore && this.currentUser) {
+    if (this.firestore && this.currentUser && !this.currentUser.isLocal) {
       try {
-        await this.firestore
-          .collection('users')
-          .doc(this.getUserId())
-          .collection('expenses')
-          .doc(id)
-          .delete();
+        const userDoc = this.firestore.collection('users').doc(this.getUserId());
+        await userDoc.collection('expenses').doc(id).delete();
+        await userDoc.collection('deleted_records').doc(id).set({
+          id,
+          type: 'expense',
+          deletedAt: Date.now()
+        });
       } catch (err) {
         console.warn('Cloud delete failed:', err);
       }
@@ -533,7 +548,8 @@ class ExpenseDatabase {
       ],
       userEmail,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      pendingCloudSync: true
     };
 
     this.assets.unshift(newAsset);
@@ -547,6 +563,10 @@ class ExpenseDatabase {
         .collection('assets')
         .doc(id)
         .set(newAsset)
+        .then(() => {
+          delete newAsset.pendingCloudSync;
+          this.saveLocalData();
+        })
         .catch(err => {
           console.warn('Cloud Firestore asset sync note:', err);
         });
@@ -589,17 +609,27 @@ class ExpenseDatabase {
 
   async deleteAsset(id) {
     this.assets = this.assets.filter(item => item.id !== id);
+
+    try {
+      const deletedIds = JSON.parse(localStorage.getItem('spentify_deleted_ids') || '[]');
+      if (!deletedIds.includes(id)) {
+        deletedIds.push(id);
+        localStorage.setItem('spentify_deleted_ids', JSON.stringify(deletedIds.slice(-500)));
+      }
+    } catch (e) {}
+
     await this.saveLocalData();
     this.notifyListeners();
 
     if (this.firestore && this.currentUser && !this.currentUser.isLocal) {
       try {
-        await this.firestore
-          .collection('users')
-          .doc(this.getUserId())
-          .collection('assets')
-          .doc(id)
-          .delete();
+        const userDoc = this.firestore.collection('users').doc(this.getUserId());
+        await userDoc.collection('assets').doc(id).delete();
+        await userDoc.collection('deleted_records').doc(id).set({
+          id,
+          type: 'asset',
+          deletedAt: Date.now()
+        });
       } catch (err) {
         console.warn('Cloud Firestore asset delete note:', err);
       }
@@ -783,8 +813,13 @@ class ExpenseDatabase {
     this.notifyListeners();
   }
 
-  startFirestoreListener() {
+  async syncFromFirestore() {
+    return this.startFirestoreListener();
+  }
+
+  async startFirestoreListener() {
     if (!this.firestore || !this.currentUser || !this.currentUser.email || this.currentUser.isLocal) return;
+
     if (this.firestoreUnsubscribe) {
       try { this.firestoreUnsubscribe(); } catch (e) {}
       this.firestoreUnsubscribe = null;
@@ -793,78 +828,115 @@ class ExpenseDatabase {
       try { this.firestoreAssetUnsubscribe(); } catch (e) {}
       this.firestoreAssetUnsubscribe = null;
     }
+    if (this.firestoreDeletedUnsubscribe) {
+      try { this.firestoreDeletedUnsubscribe(); } catch (e) {}
+      this.firestoreDeletedUnsubscribe = null;
+    }
 
     const userId = this.getUserId();
     if (!userId || userId === 'default_user') return;
 
-    const expensesRef = this.firestore.collection('users').doc(userId).collection('expenses');
-    const assetsRef = this.firestore.collection('users').doc(userId).collection('assets');
+    const userDoc = this.firestore.collection('users').doc(userId);
+    const expensesRef = userDoc.collection('expenses');
+    const assetsRef = userDoc.collection('assets');
+    const deletedRef = userDoc.collection('deleted_records');
 
-    // 1. Instant direct fetch to populate immediately on refresh or device switch
+    // 1. Fetch tombstones / deleted IDs from cloud first
+    const cloudDeletedIds = new Set();
+    try {
+      const localDeleted = JSON.parse(localStorage.getItem('spentify_deleted_ids') || '[]');
+      localDeleted.forEach(id => cloudDeletedIds.add(id));
+      const deletedSnap = await deletedRef.get();
+      deletedSnap.forEach(doc => cloudDeletedIds.add(doc.id));
+      localStorage.setItem('spentify_deleted_ids', JSON.stringify(Array.from(cloudDeletedIds).slice(-500)));
+    } catch (e) {}
+
+    // Immediately purge any deleted items from local state
+    if (cloudDeletedIds.size > 0) {
+      const bExp = this.expenses.length;
+      const bAst = this.assets.length;
+      this.expenses = this.expenses.filter(e => !cloudDeletedIds.has(e.id));
+      this.assets = this.assets.filter(a => !cloudDeletedIds.has(a.id));
+      if (this.expenses.length !== bExp || this.assets.length !== bAst) {
+        this.saveLocalData();
+        this.notifyListeners();
+      }
+    }
+
+    // 2. Direct fetch expenses from Cloud
     expensesRef.orderBy('timestamp', 'desc').get().then(snapshot => {
       const cloudExpenses = [];
       snapshot.forEach(doc => {
-        cloudExpenses.push({ id: doc.id, ...doc.data() });
+        if (!cloudDeletedIds.has(doc.id)) {
+          cloudExpenses.push({ id: doc.id, ...doc.data() });
+        } else {
+          doc.ref.delete().catch(() => {});
+        }
       });
 
-      if (cloudExpenses.length > 0) {
-        // Merge with any unsynced local items that aren't in cloud yet
-        const cloudIds = new Set(cloudExpenses.map(e => e.id));
-        const unsynced = this.expenses.filter(e => !cloudIds.has(e.id));
-        unsynced.forEach(localItem => {
-          expensesRef.doc(localItem.id).set({
-            ...localItem,
-            userEmail: this.currentUser.email
-          }).catch(() => {});
-        });
+      const cloudIds = new Set(cloudExpenses.map(e => e.id));
+      // Only upload items that have explicit pendingCloudSync flag and are not deleted
+      const pendingOffline = this.expenses.filter(e => e.pendingCloudSync && !cloudIds.has(e.id) && !cloudDeletedIds.has(e.id));
+      pendingOffline.forEach(localItem => {
+        expensesRef.doc(localItem.id).set({
+          ...localItem,
+          userEmail: this.currentUser.email
+        }).then(() => {
+          delete localItem.pendingCloudSync;
+          this.saveLocalData();
+        }).catch(() => {});
+      });
 
-        this.expenses = [...unsynced, ...cloudExpenses].sort((a, b) => (b.timestamp || b.createdAt || 0) - (a.timestamp || a.createdAt || 0));
-        this.saveLocalData();
-        this.notifyListeners();
-      } else if (this.expenses.length > 0) {
-        // Cloud is empty for this user but local had items: upload them to cloud
-        this.expenses.forEach(localItem => {
-          expensesRef.doc(localItem.id).set({
-            ...localItem,
-            userEmail: this.currentUser.email
-          }).catch(() => {});
-        });
-      }
+      this.expenses = [...pendingOffline, ...cloudExpenses].sort((a, b) => (b.timestamp || b.createdAt || 0) - (a.timestamp || a.createdAt || 0));
+      this.saveLocalData();
+      this.notifyListeners();
     }).catch(err => {
       console.warn('Initial Firestore expenses fetch note:', err);
     });
 
+    // 3. Direct fetch assets from Cloud
     assetsRef.orderBy('createdAt', 'desc').get().then(snapshot => {
       const cloudAssets = [];
       snapshot.forEach(doc => {
-        cloudAssets.push({ id: doc.id, ...doc.data() });
+        if (!cloudDeletedIds.has(doc.id)) {
+          cloudAssets.push({ id: doc.id, ...doc.data() });
+        } else {
+          doc.ref.delete().catch(() => {});
+        }
       });
-      if (cloudAssets.length > 0) {
-        this.assets = cloudAssets;
-        this.saveLocalData();
-        this.notifyListeners();
-      }
+      const cloudIds = new Set(cloudAssets.map(a => a.id));
+      const pendingOffline = this.assets.filter(a => a.pendingCloudSync && !cloudIds.has(a.id) && !cloudDeletedIds.has(a.id));
+      pendingOffline.forEach(localItem => {
+        assetsRef.doc(localItem.id).set(localItem).then(() => {
+          delete localItem.pendingCloudSync;
+          this.saveLocalData();
+        }).catch(() => {});
+      });
+      this.assets = [...pendingOffline, ...cloudAssets];
+      this.saveLocalData();
+      this.notifyListeners();
     }).catch(err => {
       console.warn('Initial Firestore assets fetch note:', err);
     });
 
-    // 2. Real-time live listener for updates from mobile and other tabs
+    // 4. Real-time live listeners
     try {
       this.firestoreUnsubscribe = expensesRef
         .orderBy('timestamp', 'desc')
         .onSnapshot(snapshot => {
           const cloudExpenses = [];
           snapshot.forEach(doc => {
-            cloudExpenses.push({ id: doc.id, ...doc.data() });
+            if (!cloudDeletedIds.has(doc.id)) {
+              cloudExpenses.push({ id: doc.id, ...doc.data() });
+            } else {
+              doc.ref.delete().catch(() => {});
+            }
           });
-          if (cloudExpenses.length > 0 || (snapshot.empty && this.expenses.length === 0)) {
-            // Merge with local unsynced items
-            const cloudIds = new Set(cloudExpenses.map(e => e.id));
-            const unsynced = this.expenses.filter(e => !cloudIds.has(e.id));
-            this.expenses = [...unsynced, ...cloudExpenses].sort((a, b) => (b.timestamp || b.createdAt || 0) - (a.timestamp || a.createdAt || 0));
-            this.saveLocalData();
-            this.notifyListeners();
-          }
+          const cloudIds = new Set(cloudExpenses.map(e => e.id));
+          const pendingOffline = this.expenses.filter(e => e.pendingCloudSync && !cloudIds.has(e.id) && !cloudDeletedIds.has(e.id));
+          this.expenses = [...pendingOffline, ...cloudExpenses].sort((a, b) => (b.timestamp || b.createdAt || 0) - (a.timestamp || a.createdAt || 0));
+          this.saveLocalData();
+          this.notifyListeners();
         }, err => {
           console.warn('Firestore snapshot note:', err);
         });
@@ -874,16 +946,42 @@ class ExpenseDatabase {
         .onSnapshot(snapshot => {
           const cloudAssets = [];
           snapshot.forEach(doc => {
-            cloudAssets.push({ id: doc.id, ...doc.data() });
+            if (!cloudDeletedIds.has(doc.id)) {
+              cloudAssets.push({ id: doc.id, ...doc.data() });
+            } else {
+              doc.ref.delete().catch(() => {});
+            }
           });
-          if (cloudAssets.length > 0) {
-            this.assets = cloudAssets;
-            this.saveLocalData();
-            this.notifyListeners();
-          }
+          const cloudIds = new Set(cloudAssets.map(a => a.id));
+          const pendingOffline = this.assets.filter(a => a.pendingCloudSync && !cloudIds.has(a.id) && !cloudDeletedIds.has(a.id));
+          this.assets = [...pendingOffline, ...cloudAssets];
+          this.saveLocalData();
+          this.notifyListeners();
         }, err => {
           console.warn('Firestore asset snapshot note:', err);
         });
+
+      // Real-time listener on deleted_records
+      this.firestoreDeletedUnsubscribe = deletedRef.onSnapshot(snapshot => {
+        let changed = false;
+        snapshot.forEach(doc => {
+          if (!cloudDeletedIds.has(doc.id)) {
+            cloudDeletedIds.add(doc.id);
+            changed = true;
+          }
+        });
+        if (changed) {
+          localStorage.setItem('spentify_deleted_ids', JSON.stringify(Array.from(cloudDeletedIds).slice(-500)));
+          const bExp = this.expenses.length;
+          const bAst = this.assets.length;
+          this.expenses = this.expenses.filter(e => !cloudDeletedIds.has(e.id));
+          this.assets = this.assets.filter(a => !cloudDeletedIds.has(a.id));
+          if (this.expenses.length !== bExp || this.assets.length !== bAst) {
+            this.saveLocalData();
+            this.notifyListeners();
+          }
+        }
+      }, () => {});
     } catch (e) {
       console.warn('Firestore subscription note:', e);
     }
