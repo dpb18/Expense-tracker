@@ -407,7 +407,13 @@ class ExpenseDatabase {
       installmentInfo,
       date: dateStr,
       time: timeStr,
-      timestamp: new Date(`${dateStr}T${timeStr}:00`).getTime() || Date.now(),
+      timestamp: (() => {
+        try {
+          const safeTime = (timeStr && timeStr.includes(':')) ? (timeStr.length === 5 ? timeStr + ':00' : timeStr) : '12:00:00';
+          const p = new Date(`${dateStr}T${safeTime}`).getTime();
+          return (!isNaN(p) && p > 0) ? p : Date.now();
+        } catch(e) { return Date.now(); }
+      })(),
       notes: (expenseData.notes || '').trim(),
       source: expenseData.source || 'chrome_popup',
       userEmail,
@@ -464,8 +470,12 @@ class ExpenseDatabase {
       const updated = { ...existing, ...updatedFields };
       if (updatedFields.amount !== undefined) updated.amount = parseFloat(updatedFields.amount) || 0;
       if (updatedFields.type) updated.type = updatedFields.type;
-      if (updatedFields.date && updatedFields.time) {
-        updated.timestamp = new Date(`${updatedFields.date}T${updatedFields.time}:00`).getTime();
+      if (updatedFields.date) {
+        try {
+          const safeTime = (updatedFields.time && updatedFields.time.includes(':')) ? (updatedFields.time.length === 5 ? updatedFields.time + ':00' : updatedFields.time) : '12:00:00';
+          const p = new Date(`${updatedFields.date}T${safeTime}`).getTime();
+          if (!isNaN(p) && p > 0) updated.timestamp = p;
+        } catch (e) {}
       }
       this.expenses[index] = updated;
       await this.saveLocalData();

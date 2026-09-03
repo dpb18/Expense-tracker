@@ -619,7 +619,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       const itemDay = parts[2];
 
       if (activeTimeRange === 'month') {
-        return itemYear === currentYear && itemMonth === currentMonth;
+        if (itemYear === currentYear && itemMonth === currentMonth) return true;
+        // Credit month-end paycheck/salary received in the last 4 days of preceding month
+        const prevMonthDate = new Date(currentYear, currentMonth - 1, 1);
+        const prevYear = prevMonthDate.getFullYear();
+        const prevMonth = prevMonthDate.getMonth();
+        if (item.type === 'income' && itemYear === prevYear && itemMonth === prevMonth && itemDay >= 27) {
+          return true;
+        }
+        return false;
       }
 
       const itemDate = new Date(itemYear, itemMonth, itemDay);
@@ -1041,7 +1049,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --- Table View Rendering ---
 
   function renderTable() {
-    let list = getFilteredExpenses();
+    let list = [...(window.db.expenses || [])];
     const query = searchInput.value.toLowerCase().trim();
     const typeFilter = tableTypeFilter ? tableTypeFilter.value : 'all';
     const catFilter = tableCategoryFilter.value;
@@ -1761,6 +1769,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       window.db = new ExpenseDatabase();
     }
     if (window.db) {
+      window.db.subscribe(() => {
+        refreshDashboard();
+        refreshAssetsView();
+      });
+      window.db.onAuthChange(() => checkDashboardAuth());
       await window.db.init();
     }
     
@@ -1779,12 +1792,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (currencySelect) currencySelect.value = (window.db.settings && window.db.settings.currency) || 'INR';
     updateCurrencyDisplay();
     checkDashboardAuth();
-
-    window.db.subscribe(() => {
-      refreshDashboard();
-      refreshAssetsView();
-    });
-    window.db.onAuthChange(() => checkDashboardAuth());
 
     // Explicitly refresh all sections, charts, credit center, table, and assets
     refreshDashboard();
