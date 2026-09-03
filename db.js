@@ -847,12 +847,11 @@ class ExpenseDatabase {
           snapshot.forEach(doc => {
             cloudExpenses.push({ id: doc.id, ...doc.data() });
           });
-          if (snapshot.size > 0 || (snapshot.empty && this.expenses.length === 0)) {
-            this.expenses = cloudExpenses;
-            this.saveLocalData();
-            this.notifyListeners();
-          } else if (cloudExpenses.length > 0) {
-            this.expenses = cloudExpenses;
+          if (cloudExpenses.length > 0 || (snapshot.empty && this.expenses.length === 0)) {
+            // Merge with local unsynced items
+            const cloudIds = new Set(cloudExpenses.map(e => e.id));
+            const unsynced = this.expenses.filter(e => !cloudIds.has(e.id));
+            this.expenses = [...unsynced, ...cloudExpenses].sort((a, b) => (b.timestamp || b.createdAt || 0) - (a.timestamp || a.createdAt || 0));
             this.saveLocalData();
             this.notifyListeners();
           }
@@ -1313,7 +1312,14 @@ class ExpenseDatabase {
 }
 
 if (typeof window !== 'undefined') {
-  window.db = new ExpenseDatabase();
+  window.ExpenseDatabase = ExpenseDatabase;
+  window.getLocalDateString = getLocalDateString;
+  window.isRolloverItem = isRolloverItem;
+  try {
+    window.db = window.db || new ExpenseDatabase();
+  } catch (e) {
+    console.warn('ExpenseDatabase init error:', e);
+  }
 }
 
 if (typeof globalThis !== 'undefined') {

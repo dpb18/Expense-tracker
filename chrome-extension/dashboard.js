@@ -548,11 +548,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.querySelectorAll('.modalCurrencySymbol').forEach(el => el.textContent = symbol);
   }
 
-  function openExpenseModalForAdd(initialType = 'expense') {
-    if (!window.db.currentUser || window.db.currentUser.isLocal) {
-      alert('Please sign in with Google to record expenses or income.');
-      if (googleAuthBtn) googleAuthBtn.click();
-      return;
+  async function openExpenseModalForAdd(initialType = 'expense') {
+    if (!window.db || !window.db.currentUser || window.db.currentUser.isLocal) {
+      if (window.db && typeof window.db.signInWithGoogle === 'function') {
+        const res = await window.db.signInWithGoogle();
+        if (!res || !res.success || !res.user) {
+          return;
+        }
+        checkDashboardAuth();
+      } else {
+        alert('Please sign in with Google to record expenses or income.');
+        if (googleAuthBtn) googleAuthBtn.click();
+        return;
+      }
     }
 
     editExpenseId.value = '';
@@ -1749,7 +1757,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // --- Safe Initialization ---
   try {
-    await window.db.init();
+    if (!window.db && typeof ExpenseDatabase !== 'undefined') {
+      window.db = new ExpenseDatabase();
+    }
+    if (window.db) {
+      await window.db.init();
+    }
     
     // Clean up any previously seeded mock demo assets so portfolio starts clean at zero
     if (!window.db.assets) {
