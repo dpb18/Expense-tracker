@@ -268,6 +268,9 @@ class ExpenseDatabase {
           spentify_user: this.currentUser
         }).catch(() => { });
       }
+
+      // Auto-process any pending SIP scheduled deductions
+      this.processSipDeductions().catch(err => console.warn('Auto SIP startup note:', err));
     } catch (e) {
       console.warn('Spentify: Local cache read error', e);
     }
@@ -383,11 +386,41 @@ class ExpenseDatabase {
 
     if (paymentMethod === 'flipkart_pay3' && type === 'expense') {
       const perMonthAmt = Math.round((amount / 3) * 100) / 100;
-      installments = [
-        { monthIndex: 0, amount: perMonthAmt, label: 'Month 1', status: 'pending' },
-        { monthIndex: 1, amount: perMonthAmt, label: 'Month 2', status: 'pending' },
-        { monthIndex: 2, amount: perMonthAmt, label: 'Month 3', status: 'pending' }
-      ];
+      const lastMonthAmt = Math.round((amount - (perMonthAmt * 2)) * 100) / 100;
+
+      const dateParts = dateStr.split('-').map(Number);
+      const pYear = dateParts[0];
+      const pMonth = (dateParts[1] || 1) - 1; // 0-indexed
+      const pDay = dateParts[2] || 1;
+
+      const currentNow = new Date();
+      const curYear = currentNow.getFullYear();
+      const curMonth = currentNow.getMonth();
+
+      installments = [0, 1, 2].map(idx => {
+        const instDate = new Date(pYear, pMonth + idx, 1);
+        const instYear = instDate.getFullYear();
+        const instMonth = instDate.getMonth();
+        const billingMonth = `${instYear}-${String(instMonth + 1).padStart(2, '0')}`;
+        const maxDays = new Date(instYear, instMonth + 1, 0).getDate();
+        const dueDay = Math.min(pDay, maxDays);
+        const dueDate = `${instYear}-${String(instMonth + 1).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`;
+        const instAmt = idx === 2 ? lastMonthAmt : perMonthAmt;
+
+        // Any installment from a strictly past month is considered paid by default
+        const isPastMonth = instYear < curYear || (instYear === curYear && instMonth < curMonth);
+
+        return {
+          monthIndex: idx,
+          label: `Month ${idx + 1}`,
+          amount: instAmt,
+          dueDate,
+          billingMonth,
+          status: isPastMonth ? 'paid' : 'pending',
+          paidDate: isPastMonth ? dueDate : null
+        };
+      });
+
       installmentInfo = {
         plan: 'flipkart_pay3',
         tenureMonths: 3,
@@ -525,9 +558,25 @@ class ExpenseDatabase {
     const id = 'ast_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
     const investedAmount = parseFloat(assetData.investedAmount) || 0;
     const currentValue = (assetData.currentValue !== undefined && !isNaN(parseFloat(assetData.currentValue))) ? parseFloat(assetData.currentValue) : investedAmount;
-    const monthlySip = parseFloat(assetData.monthlySip) || 0;
-    const isSip = Boolean(assetData.isSip || assetData.investmentType === 'sip' || monthlySip > 0);
+    
+    // SIP Configuration
+    const sipFrequency = assetData.sipFrequency || 'monthly'; // 'daily', 'weekly', 'monthly'
+    const sipAmount = parseFloat(assetData.sipAmount) || parseFloat(assetData.monthlySip) || 0;
+    const sipPaymentMethod = assetData.sipPaymentMethod || 'upi';
+    const sipWeekday = parseInt(assetData.sipWeekday) || 1; // 1=Mon, ..., 7=Sun
+    const sipDay = parseInt(assetData.sipDay) || 5;
+    const isSip = Boolean(assetData.isSip || assetData.investmentType === 'sip' || sipAmount > 0);
     const dateStr = assetData.purchaseDate || getLocalDateString(new Date());
+    const sipStartDate = assetData.sipStartDate || dateStr;
+    const autoDeduct = assetData.autoDeduct !== false;
+
+    // Normalize monthly SIP commitment
+    let monthlySip = sipAmount;
+    if (sipFrequency === 'daily') {
+      monthlySip = sipAmount * 30;
+    } else if (sipFrequency === 'weekly') {
+      monthlySip = Math.round(sipAmount * 52 / 12);
+    }
 
     const newAsset = {
       id,
@@ -537,8 +586,15 @@ class ExpenseDatabase {
       investedAmount,
       currentValue,
       isSip,
+      sipFrequency,
+      sipAmount,
+      sipPaymentMethod,
+      sipWeekday,
+      sipDay,
+      sipStartDate,
+      autoDeduct,
+      lastSipDeductionDate: assetData.lastSipDeductionDate || null,
       monthlySip,
-      sipDay: parseInt(assetData.sipDay) || 5,
       units: parseFloat(assetData.units) || 0,
       unitType: assetData.unitType || (assetData.category === 'gold' ? 'grams' : 'units'),
       purchaseDate: dateStr,
@@ -572,6 +628,15 @@ class ExpenseDatabase {
         });
     }
 
+    // Process automated deductions if scheduled
+    if (isSip && autoDeduct) {
+      try {
+        await this.processSipDeductions();
+      } catch (err) {
+        console.warn('Auto SIP process note:', err);
+      }
+    }
+
     return newAsset;
   }
 
@@ -583,8 +648,27 @@ class ExpenseDatabase {
 
       if (updatedFields.investedAmount !== undefined) updated.investedAmount = parseFloat(updatedFields.investedAmount) || 0;
       if (updatedFields.currentValue !== undefined) updated.currentValue = parseFloat(updatedFields.currentValue) || 0;
-      if (updatedFields.monthlySip !== undefined) updated.monthlySip = parseFloat(updatedFields.monthlySip) || 0;
       if (updatedFields.units !== undefined) updated.units = parseFloat(updatedFields.units) || 0;
+      
+      if (updatedFields.sipFrequency !== undefined) updated.sipFrequency = updatedFields.sipFrequency;
+      if (updatedFields.sipAmount !== undefined) updated.sipAmount = parseFloat(updatedFields.sipAmount) || 0;
+      if (updatedFields.sipPaymentMethod !== undefined) updated.sipPaymentMethod = updatedFields.sipPaymentMethod;
+      if (updatedFields.sipWeekday !== undefined) updated.sipWeekday = parseInt(updatedFields.sipWeekday) || 1;
+      if (updatedFields.sipDay !== undefined) updated.sipDay = parseInt(updatedFields.sipDay) || 5;
+      if (updatedFields.sipStartDate !== undefined) updated.sipStartDate = updatedFields.sipStartDate;
+      if (updatedFields.autoDeduct !== undefined) updated.autoDeduct = Boolean(updatedFields.autoDeduct);
+      if (updatedFields.lastSipDeductionDate !== undefined) updated.lastSipDeductionDate = updatedFields.lastSipDeductionDate;
+
+      // Recalculate monthly commitment
+      const freq = updated.sipFrequency || 'monthly';
+      const amt = parseFloat(updated.sipAmount) || parseFloat(updated.monthlySip) || 0;
+      if (freq === 'daily') {
+        updated.monthlySip = amt * 30;
+      } else if (freq === 'weekly') {
+        updated.monthlySip = Math.round(amt * 52 / 12);
+      } else {
+        updated.monthlySip = amt;
+      }
 
       this.assets[index] = updated;
       await this.saveLocalData();
@@ -602,6 +686,15 @@ class ExpenseDatabase {
           console.warn('Cloud Firestore asset update note:', err);
         }
       }
+
+      if (updated.isSip && updated.autoDeduct) {
+        try {
+          await this.processSipDeductions();
+        } catch (err) {
+          console.warn('Auto SIP process note:', err);
+        }
+      }
+
       return updated;
     }
     return null;
@@ -636,7 +729,7 @@ class ExpenseDatabase {
     }
   }
 
-  async addAssetTopup(id, topupAmount, date = null, note = '') {
+  async addAssetTopup(id, topupAmount, date = null, note = '', deductFromAccount = false, paymentMethod = 'upi') {
     const asset = this.assets.find(a => a.id === id);
     if (!asset) return null;
 
@@ -649,11 +742,312 @@ class ExpenseDatabase {
     const history = asset.history || [];
     history.push({ date: dateStr, amount: amt, type: 'topup', note: note || 'Top-up / SIP installment' });
 
+    if (deductFromAccount) {
+      const topupExpense = {
+        id: 'exp_topup_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+        type: 'expense',
+        amount: amt,
+        title: `${asset.name} (Top-up)`,
+        category: 'investment',
+        paymentMethod: paymentMethod || 'upi',
+        date: dateStr,
+        time: '12:00',
+        timestamp: Date.now(),
+        notes: note || `Investment top-up for ${asset.name}`,
+        source: 'asset_topup',
+        userEmail: (this.currentUser && this.currentUser.email) || '',
+        createdAt: Date.now(),
+        pendingCloudSync: true
+      };
+      this.expenses.unshift(topupExpense);
+    }
+
     return this.updateAsset(id, {
       investedAmount: newInvested,
       currentValue: newCurrent,
       history
     });
+  }
+
+  // --- SIP Scheduling & Auto-deduction Helpers ---
+
+  isSipDebitDay(dateStr, freq, asset) {
+    const parts = dateStr.split('-').map(Number);
+    const d = new Date(parts[0], parts[1] - 1, parts[2]);
+
+    if (freq === 'daily') {
+      return true;
+    } else if (freq === 'weekly') {
+      const jsDay = d.getDay(); // 0=Sun, 1=Mon...6=Sat
+      const targetDay = parseInt(asset.sipWeekday) || 1;
+      const targetJsDay = targetDay === 7 ? 0 : targetDay;
+      return jsDay === targetJsDay;
+    } else if (freq === 'monthly') {
+      const targetDay = parseInt(asset.sipDay) || 5;
+      const daysInMonth = new Date(parts[0], parts[1], 0).getDate();
+      const actualDebitDay = Math.min(targetDay, daysInMonth);
+      return parts[2] === actualDebitDay;
+    }
+    return false;
+  }
+
+  addDaysToDateString(dateStr, n) {
+    const parts = dateStr.split('-').map(Number);
+    const d = new Date(parts[0], parts[1] - 1, parts[2]);
+    d.setDate(d.getDate() + n);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  async processSipDeductions() {
+    const todayStr = getLocalDateString(new Date());
+    let deductionsCount = 0;
+    let totalDeducted = 0;
+    const processedAssets = [];
+
+    if (!Array.isArray(this.assets) || this.assets.length === 0) {
+      return { deductionsCount: 0, totalDeducted: 0, processedAssets: [] };
+    }
+
+    for (let asset of this.assets) {
+      if (!asset.isSip || asset.autoDeduct === false) continue;
+
+      const sipAmount = parseFloat(asset.sipAmount) || parseFloat(asset.monthlySip) || 0;
+      if (sipAmount <= 0) continue;
+
+      const freq = asset.sipFrequency || 'monthly';
+      const payMethod = asset.sipPaymentMethod || 'upi';
+      const startDateStr = asset.sipStartDate || asset.purchaseDate || todayStr;
+
+      let checkDateStr = asset.lastSipDeductionDate ? 
+        this.addDaysToDateString(asset.lastSipDeductionDate, 1) : 
+        startDateStr;
+
+      const sixtyDaysAgo = this.addDaysToDateString(todayStr, -60);
+      if (checkDateStr < sixtyDaysAgo) {
+        checkDateStr = sixtyDaysAgo;
+      }
+
+      if (checkDateStr > todayStr) continue;
+
+      let currentCheck = checkDateStr;
+      let assetUpdated = false;
+
+      while (currentCheck <= todayStr) {
+        const isDebitDay = this.isSipDebitDay(currentCheck, freq, asset);
+
+        if (isDebitDay) {
+          const alreadyExists = this.expenses.some(e => 
+            e.type === 'expense' && 
+            e.date === currentCheck && 
+            ((e.isSipDeduction && e.sipAssetId === asset.id) || 
+             (e.title && e.title.startsWith(asset.name) && e.notes && e.notes.includes('SIP') && Math.abs(e.amount - sipAmount) < 0.01))
+          );
+
+          if (!alreadyExists) {
+            const freqLabel = freq.charAt(0).toUpperCase() + freq.slice(1);
+            const expenseId = 'exp_sip_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+
+            const newExpense = {
+              id: expenseId,
+              type: 'expense',
+              amount: sipAmount,
+              title: `${asset.name} (${freqLabel} SIP)`,
+              category: 'investment',
+              paymentMethod: payMethod,
+              isDeferred: false,
+              isSipDeduction: true,
+              sipAssetId: asset.id,
+              date: currentCheck,
+              time: '09:00',
+              timestamp: new Date(`${currentCheck}T09:00:00`).getTime() || Date.now(),
+              notes: `Automated ${freqLabel} SIP deduction (${payMethod.toUpperCase()}) for ${asset.name}`,
+              source: 'sip_autodeduct',
+              userEmail: (this.currentUser && this.currentUser.email) || '',
+              createdAt: Date.now(),
+              pendingCloudSync: true
+            };
+
+            this.expenses.unshift(newExpense);
+
+            asset.investedAmount = Math.round(((parseFloat(asset.investedAmount) || 0) + sipAmount) * 100) / 100;
+            asset.currentValue = Math.round(((parseFloat(asset.currentValue) || 0) + sipAmount) * 100) / 100;
+            if (!Array.isArray(asset.history)) asset.history = [];
+            asset.history.push({
+              date: currentCheck,
+              amount: sipAmount,
+              type: 'sip_auto',
+              note: `${freqLabel} SIP auto-debit (${payMethod.toUpperCase()})`
+            });
+            asset.lastSipDeductionDate = currentCheck;
+            asset.updatedAt = Date.now();
+            asset.pendingCloudSync = true;
+
+            deductionsCount++;
+            totalDeducted += sipAmount;
+            assetUpdated = true;
+          } else {
+            if (!asset.lastSipDeductionDate || asset.lastSipDeductionDate < currentCheck) {
+              asset.lastSipDeductionDate = currentCheck;
+              assetUpdated = true;
+            }
+          }
+        }
+
+        currentCheck = this.addDaysToDateString(currentCheck, 1);
+      }
+
+      if (assetUpdated) {
+        processedAssets.push(asset.name);
+      }
+    }
+
+    if (deductionsCount > 0) {
+      await this.saveLocalData();
+      this.notifyListeners();
+
+      if (this.firestore && this.currentUser && !this.currentUser.isLocal) {
+        this.syncAllPending();
+      }
+    }
+
+    return { deductionsCount, totalDeducted, processedAssets };
+  }
+
+  // --- Flipkart Pay in 3 & Credit Settlement Helpers ---
+
+  getNormalizedInstallments(item) {
+    if (item.paymentMethod !== 'flipkart_pay3') return [];
+
+    const amt = parseFloat(item.amount) || 0;
+    const dateStr = item.date || getLocalDateString(new Date());
+    const dateParts = dateStr.split('-').map(Number);
+    const pYear = dateParts[0];
+    const pMonth = (dateParts[1] || 1) - 1; // 0-indexed
+    const pDay = dateParts[2] || 1;
+
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth();
+
+    const perMonthAmt = Math.round((amt / 3) * 100) / 100;
+    const lastMonthAmt = Math.round((amt - (perMonthAmt * 2)) * 100) / 100;
+
+    const existingInstallments = Array.isArray(item.installments) ? item.installments : [];
+
+    return [0, 1, 2].map(idx => {
+      const existing = existingInstallments[idx] || {};
+      const instDate = new Date(pYear, pMonth + idx, 1);
+      const instYear = instDate.getFullYear();
+      const instMonth = instDate.getMonth();
+      const billingMonth = `${instYear}-${String(instMonth + 1).padStart(2, '0')}`;
+      const maxDays = new Date(instYear, instMonth + 1, 0).getDate();
+      const dueDay = Math.min(pDay, maxDays);
+      const dueDate = `${instYear}-${String(instMonth + 1).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`;
+      const instAmt = idx === 2 ? lastMonthAmt : perMonthAmt;
+
+      // Status resolution algorithm:
+      // If billing month is strictly before current month (e.g. August when today is September):
+      // By default it is PAID as user specified: "August as it passed so i already paid"
+      const isPastMonth = instYear < curYear || (instYear === curYear && instMonth < curMonth);
+      let status = existing.status;
+      if (!status || (status === 'pending' && isPastMonth && existing.userMarkedStatus !== 'pending')) {
+        status = isPastMonth ? 'paid' : 'pending';
+      }
+
+      return {
+        monthIndex: idx,
+        label: `Month ${idx + 1}`,
+        amount: existing.amount !== undefined ? existing.amount : instAmt,
+        dueDate: existing.dueDate || dueDate,
+        billingMonth: existing.billingMonth || billingMonth,
+        status: status,
+        paidDate: status === 'paid' ? (existing.paidDate || dueDate) : null,
+        paidPaymentMethod: existing.paidPaymentMethod || null,
+        userMarkedStatus: existing.userMarkedStatus || null
+      };
+    });
+  }
+
+  async toggleInstallmentStatus(expenseId, monthIndex, targetStatus = null, paidDate = null, paymentMethod = 'upi') {
+    const expense = this.expenses.find(e => e.id === expenseId);
+    if (!expense || expense.paymentMethod !== 'flipkart_pay3') return null;
+
+    const installments = this.getNormalizedInstallments(expense);
+    const inst = installments[monthIndex];
+    if (!inst) return null;
+
+    const newStatus = targetStatus || (inst.status === 'paid' ? 'pending' : 'paid');
+    inst.status = newStatus;
+    inst.userMarkedStatus = newStatus;
+
+    if (newStatus === 'paid') {
+      inst.paidDate = paidDate || getLocalDateString(new Date());
+      inst.paidPaymentMethod = paymentMethod;
+    } else {
+      inst.paidDate = null;
+      inst.paidPaymentMethod = null;
+    }
+
+    expense.installments = installments;
+    expense.updatedAt = Date.now();
+    expense.pendingCloudSync = true;
+
+    await this.saveLocalData();
+    this.notifyListeners();
+
+    if (this.firestore && this.currentUser && !this.currentUser.isLocal) {
+      try {
+        await this.firestore
+          .collection('users')
+          .doc(this.getUserId())
+          .collection('expenses')
+          .doc(expenseId)
+          .update({
+            installments,
+            updatedAt: Date.now()
+          });
+      } catch (err) {
+        console.warn('Cloud sync installment error:', err);
+      }
+    }
+
+    return { expense, installment: inst };
+  }
+
+  async toggleCreditSettlement(expenseId, targetStatus = null) {
+    const expense = this.expenses.find(e => e.id === expenseId);
+    if (!expense) return null;
+
+    const newSettled = targetStatus !== null ? Boolean(targetStatus) : !expense.isSettled;
+    expense.isSettled = newSettled;
+    expense.settledAt = newSettled ? Date.now() : null;
+    expense.updatedAt = Date.now();
+    expense.pendingCloudSync = true;
+
+    await this.saveLocalData();
+    this.notifyListeners();
+
+    if (this.firestore && this.currentUser && !this.currentUser.isLocal) {
+      try {
+        await this.firestore
+          .collection('users')
+          .doc(this.getUserId())
+          .collection('expenses')
+          .doc(expenseId)
+          .update({
+            isSettled: newSettled,
+            settledAt: expense.settledAt,
+            updatedAt: Date.now()
+          });
+      } catch (err) {
+        console.warn('Cloud sync settlement error:', err);
+      }
+    }
+
+    return expense;
   }
 
   getAssetSummary(filteredAssets = null) {
@@ -672,11 +1066,23 @@ class ExpenseDatabase {
     list.forEach(a => {
       const inv = parseFloat(a.investedAmount) || 0;
       const cur = (a.currentValue !== undefined && !isNaN(parseFloat(a.currentValue))) ? parseFloat(a.currentValue) : inv;
-      const sip = a.isSip ? (parseFloat(a.monthlySip) || 0) : 0;
+
+      // Compute normalized monthly SIP commitment
+      let monthlyEquivalent = 0;
+      if (a.isSip) {
+        const amt = parseFloat(a.sipAmount) || parseFloat(a.monthlySip) || 0;
+        if (a.sipFrequency === 'daily') {
+          monthlyEquivalent = amt * 30;
+        } else if (a.sipFrequency === 'weekly') {
+          monthlyEquivalent = Math.round(amt * 52 / 12);
+        } else {
+          monthlyEquivalent = amt;
+        }
+      }
 
       totalInvested += inv;
       totalCurrentValue += cur;
-      monthlySipTotal += sip;
+      monthlySipTotal += monthlyEquivalent;
 
       const cat = a.category || 'other';
       if (!categoryTotals[cat]) {
@@ -1033,6 +1439,18 @@ class ExpenseDatabase {
     let flipkartPay3Total = 0;
 
     // 3-Month Installment Projection (Timeline Schedule)
+    const nextMonthDate = new Date(currentYear, currentMonth + 1, 1);
+    const nextYear = nextMonthDate.getFullYear();
+    const nextMonth = nextMonthDate.getMonth();
+
+    const m3Date = new Date(currentYear, currentMonth + 2, 1);
+    const m3Year = m3Date.getFullYear();
+    const m3Month = m3Date.getMonth();
+
+    const curMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+    const nextMonthKey = `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}`;
+    const m3MonthKey = `${m3Year}-${String(m3Month + 1).padStart(2, '0')}`;
+
     const timelineSchedule = {
       currentMonth: { creditCard: 0, lazyPay: 0, flipkartPay3: 0, total: 0 },
       nextMonth: { creditCard: 0, lazyPay: 0, flipkartPay3: 0, total: 0 },
@@ -1128,17 +1546,29 @@ class ExpenseDatabase {
         }
 
         if (item.paymentMethod === 'credit_card' || item.paymentMethod === 'card') {
-          creditCardDues += amt;
-          timelineSchedule.nextMonth.creditCard += amt;
+          if (!item.isSettled) {
+            creditCardDues += amt;
+            timelineSchedule.nextMonth.creditCard += amt;
+          }
         } else if (item.paymentMethod === 'lazypay') {
-          lazyPayDues += amt;
-          timelineSchedule.nextMonth.lazyPay += amt;
+          if (!item.isSettled) {
+            lazyPayDues += amt;
+            timelineSchedule.nextMonth.lazyPay += amt;
+          }
         } else if (item.paymentMethod === 'flipkart_pay3') {
-          flipkartPay3Total += amt;
-          const perMo = Math.round((amt / 3) * 100) / 100;
-          timelineSchedule.currentMonth.flipkartPay3 += perMo;
-          timelineSchedule.nextMonth.flipkartPay3 += perMo;
-          timelineSchedule.month3.flipkartPay3 += (amt - (perMo * 2));
+          const insts = this.getNormalizedInstallments(item);
+          insts.forEach(inst => {
+            if (inst.status !== 'paid') {
+              flipkartPay3Total += inst.amount;
+              if (inst.billingMonth === curMonthKey) {
+                timelineSchedule.currentMonth.flipkartPay3 += inst.amount;
+              } else if (inst.billingMonth === nextMonthKey) {
+                timelineSchedule.nextMonth.flipkartPay3 += inst.amount;
+              } else if (inst.billingMonth === m3MonthKey) {
+                timelineSchedule.month3.flipkartPay3 += inst.amount;
+              }
+            }
+          });
         }
       }
 

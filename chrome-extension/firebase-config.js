@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS = {
     { id: "entertainment", name: "Movies & Outing", icon: "🎬", color: "#06b6d4" },
     { id: "health", name: "Health & Pharmacy", icon: "💊", color: "#ef4444" },
     { id: "tech", name: "Recharge & Tech", icon: "💻", color: "#6366f1" },
+    { id: "investment", name: "Investment & SIP Outflow", icon: "📊", color: "#38bdf8" },
     { id: "other", name: "Other Expenses", icon: "📦", color: "#64748b" }
   ],
   incomeCategories: [

@@ -142,7 +142,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const assetIsSipCheck = document.getElementById('assetIsSipCheck');
   const sipFieldsRow = document.getElementById('sipFieldsRow');
   const assetMonthlySipInput = document.getElementById('assetMonthlySipInput');
+  const assetSipFreqSelect = document.getElementById('assetSipFreqSelect');
+  const assetSipPaymentMethod = document.getElementById('assetSipPaymentMethod');
+  const sipWeeklyDayGroup = document.getElementById('sipWeeklyDayGroup');
+  const assetSipWeekdaySelect = document.getElementById('assetSipWeekdaySelect');
+  const sipMonthlyDayGroup = document.getElementById('sipMonthlyDayGroup');
   const assetSipDayInput = document.getElementById('assetSipDayInput');
+  const assetSipStartDateInput = document.getElementById('assetSipStartDateInput');
+  const assetAutoDeductCheck = document.getElementById('assetAutoDeductCheck');
   const assetUnitsInput = document.getElementById('assetUnitsInput');
   const assetUnitTypeInput = document.getElementById('assetUnitTypeInput');
   const assetDateInput = document.getElementById('assetDateInput');
@@ -158,6 +165,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const topupAmountInput = document.getElementById('topupAmountInput');
   const topupDateInput = document.getElementById('topupDateInput');
   const topupNoteInput = document.getElementById('topupNoteInput');
+  const topupDeductAccountCheck = document.getElementById('topupDeductAccountCheck');
+  const topupPaymentMethodRow = document.getElementById('topupPaymentMethodRow');
+  const topupPaymentMethodSelect = document.getElementById('topupPaymentMethodSelect');
   const closeTopupModalBtn = document.getElementById('closeTopupModalBtn');
   const cancelTopupModalBtn = document.getElementById('cancelTopupModalBtn');
 
@@ -748,19 +758,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Render Credit & BNPL Active Statements List
+    // Render Credit & BNPL Active Statements List
     if (creditItemsList) {
-      const creditItems = (window.db.expenses || []).filter(e => 
+      const allCreditItems = (window.db.expenses || []).filter(e => 
         e.type !== 'income' && ['credit_card', 'card', 'lazypay', 'flipkart_pay3'].includes(e.paymentMethod)
       );
 
+      const activeUnsettledItems = allCreditItems.filter(item => {
+        if (item.paymentMethod === 'flipkart_pay3') {
+          const insts = window.db.getNormalizedInstallments(item);
+          return insts.some(i => i.status !== 'paid');
+        }
+        return !item.isSettled;
+      });
+
       if (creditItemsCount) {
-        creditItemsCount.textContent = `${creditItems.length} unsettled ${creditItems.length === 1 ? 'charge' : 'charges'}`;
+        creditItemsCount.textContent = `${activeUnsettledItems.length} active ${activeUnsettledItems.length === 1 ? 'liability' : 'liabilities'}`;
       }
 
-      if (creditItems.length === 0) {
+      if (allCreditItems.length === 0) {
         creditItemsList.innerHTML = `
           <div style="text-align: center; padding: 18px; color: #64748b; font-size: 12px;">
-            No unsettled credit card, LazyPay, or Pay in 3 purchases recorded.
+            No credit card, LazyPay, or Pay in 3 purchases recorded.
           </div>
         `;
       } else {
@@ -769,36 +788,94 @@ document.addEventListener('DOMContentLoaded', async () => {
           ...(window.db.settings.incomeCategories || [])
         ];
         const symbol = window.db.settings.currencySymbol || '₹';
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-        creditItemsList.innerHTML = creditItems.slice(0, 10).map(item => {
+        creditItemsList.innerHTML = allCreditItems.slice(0, 15).map(item => {
           const catObj = allCategories.find(c => c.id === item.category) || { icon: '📦', name: 'Other', color: '#64748b' };
           let payBadge = '';
           let dueScheduleText = '';
+          let installmentHtml = '';
+          let rightSideAmtHtml = '';
 
           if (item.paymentMethod === 'credit_card' || item.paymentMethod === 'card') {
-            payBadge = `<span class="credit-due-pill">💳 Credit Card</span>`;
-            dueScheduleText = `Due in <strong>${m2Name}</strong> statement bill (Paid next month)`;
+            const isSettled = Boolean(item.isSettled);
+            payBadge = `<span class="credit-due-pill ${isSettled ? 'settled' : ''}">💳 ${isSettled ? 'Card (Settled)' : 'Credit Card'}</span>`;
+            dueScheduleText = isSettled ? 
+              `<span style="color:#10b981;">✅ Bill settled</span>` : 
+              `Due in <strong>${m2Name}</strong> statement bill (Paid next month)`;
+            rightSideAmtHtml = `
+              <div class="credit-item-amt" style="${isSettled ? 'text-decoration: line-through; opacity: 0.5;' : ''}">${symbol}${Math.round(item.amount || 0).toLocaleString('en-IN')}</div>
+              <button type="button" class="btn-inst-action ${isSettled ? 'undo' : ''}" data-action="toggle-settle" data-id="${item.id}">
+                ${isSettled ? 'Undo' : 'Mark Settled'}
+              </button>
+            `;
           } else if (item.paymentMethod === 'lazypay') {
-            payBadge = `<span class="credit-due-pill">🛍️ LazyPay</span>`;
-            dueScheduleText = `Due in <strong>${m2Name}</strong> bill cycle (Paid next month)`;
+            const isSettled = Boolean(item.isSettled);
+            payBadge = `<span class="credit-due-pill ${isSettled ? 'settled' : ''}">🛍️ ${isSettled ? 'LazyPay (Settled)' : 'LazyPay'}</span>`;
+            dueScheduleText = isSettled ? 
+              `<span style="color:#10b981;">✅ Bill settled</span>` : 
+              `Due in <strong>${m2Name}</strong> bill cycle (Paid next month)`;
+            rightSideAmtHtml = `
+              <div class="credit-item-amt" style="${isSettled ? 'text-decoration: line-through; opacity: 0.5;' : ''}">${symbol}${Math.round(item.amount || 0).toLocaleString('en-IN')}</div>
+              <button type="button" class="btn-inst-action ${isSettled ? 'undo' : ''}" data-action="toggle-settle" data-id="${item.id}">
+                ${isSettled ? 'Undo' : 'Mark Settled'}
+              </button>
+            `;
           } else if (item.paymentMethod === 'flipkart_pay3') {
-            const perMo = Math.round(item.amount / 3);
-            payBadge = `<span class="credit-due-pill emi">📦 Flipkart Pay in 3</span>`;
-            dueScheduleText = `Split across 3 months (3 x ${symbol}${perMo.toLocaleString('en-IN')}/mo in ${m1Name}, ${m2Name}, ${m3Name})`;
+            const insts = window.db.getNormalizedInstallments(item);
+            const unpaidInsts = insts.filter(i => i.status !== 'paid');
+            const remainingAmt = unpaidInsts.reduce((sum, i) => sum + i.amount, 0);
+            const isAllPaid = insts.length > 0 && unpaidInsts.length === 0;
+
+            payBadge = `<span class="credit-due-pill emi ${isAllPaid ? 'settled' : ''}">📦 Pay in 3 ${isAllPaid ? '(Paid)' : `(${3 - unpaidInsts.length}/3)`}</span>`;
+            dueScheduleText = isAllPaid ? 
+              `<span style="color:#10b981;">✅ All 3 installments paid</span>` : 
+              `Remaining: <strong style="color:#f59e0b;">${symbol}${Math.round(remainingAmt).toLocaleString('en-IN')}</strong> of ${symbol}${Math.round(item.amount).toLocaleString('en-IN')} (${unpaidInsts.length} remaining)`;
+
+            const instCards = insts.map((inst, idx) => {
+              const bParts = (inst.billingMonth || '').split('-');
+              let mLabel = `Month ${idx + 1}`;
+              if (bParts.length === 2) {
+                const mIdx = parseInt(bParts[1], 10) - 1;
+                mLabel = `${monthNames[mIdx] || ''} '${bParts[0].slice(-2)}`;
+              }
+              const isPaid = inst.status === 'paid';
+              return `
+                <div class="inst-chip ${isPaid ? 'paid' : 'pending'}">
+                  <span class="inst-month">${mLabel}</span>
+                  <span class="inst-amt">${symbol}${Math.round(inst.amount)}</span>
+                  <button type="button" class="btn-inst-chip ${isPaid ? 'paid' : 'mark-pay'}" 
+                          data-action="toggle-inst" data-id="${item.id}" data-idx="${idx}"
+                          title="${isPaid ? 'Click to mark as unpaid' : 'Click to mark as paid'}">
+                    ${isPaid ? '✓ Paid' : 'Pay'}
+                  </button>
+                </div>
+              `;
+            }).join('');
+
+            installmentHtml = `<div class="installments-chips-row">${instCards}</div>`;
+
+            rightSideAmtHtml = `
+              <div class="credit-item-amt" style="${isAllPaid ? 'text-decoration: line-through; opacity: 0.5;' : 'color: #fbbf24;'}">
+                ${symbol}${Math.round(isAllPaid ? 0 : remainingAmt).toLocaleString('en-IN')}
+              </div>
+              <small style="font-size: 10.5px; color: #94a3b8;">Total: ${symbol}${Math.round(item.amount).toLocaleString('en-IN')}</small>
+            `;
           }
 
           return `
-            <div class="credit-item-row">
+            <div class="credit-item-row" style="${(item.isSettled || (item.paymentMethod === 'flipkart_pay3' && dueScheduleText.includes('All 3'))) ? 'opacity: 0.65;' : ''}">
               <div class="credit-item-left">
                 <span class="credit-item-icon">${catObj.icon}</span>
-                <div>
+                <div style="flex: 1;">
                   <div class="credit-item-title">${escapeHtml(item.title)}</div>
                   <div class="credit-item-meta">${item.date} • ${catObj.name} • ${dueScheduleText}</div>
+                  ${installmentHtml}
                 </div>
               </div>
               <div class="credit-item-right">
                 ${payBadge}
-                <div class="credit-item-amt">${symbol}${Math.round(item.amount || 0).toLocaleString('en-IN')}</div>
+                ${rightSideAmtHtml}
               </div>
             </div>
           `;
@@ -1431,7 +1508,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       let planDetailHtml = '';
       if (asset.isSip) {
-        planDetailHtml = `<span class="badge-pill" style="border-color: #3b82f640; color: #60a5fa;">📊 SIP ${formatCurrency(asset.monthlySip || 0)}/mo <small>(Day ${asset.sipDay || 5})</small></span>`;
+        const freq = asset.sipFrequency || 'monthly';
+        const amt = asset.sipAmount || asset.monthlySip || 0;
+        const paySource = (asset.sipPaymentMethod || 'upi').toUpperCase();
+        if (freq === 'daily') {
+          planDetailHtml = `<span class="badge-pill" style="border-color: #38bdf840; color: #38bdf8; background: rgba(56, 189, 248, 0.08);">⚡ Daily SIP ${formatCurrency(amt)}/day <small>(${paySource})</small></span>`;
+        } else if (freq === 'weekly') {
+          const weekdayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+          const dayName = weekdayNames[parseInt(asset.sipWeekday) || 1] || 'Mon';
+          planDetailHtml = `<span class="badge-pill" style="border-color: #10b98140; color: #34d399; background: rgba(16, 185, 129, 0.08);">📅 Weekly SIP ${formatCurrency(amt)}/wk <small>(${dayName}, ${paySource})</small></span>`;
+        } else {
+          planDetailHtml = `<span class="badge-pill" style="border-color: #3b82f640; color: #60a5fa; background: rgba(59, 130, 246, 0.08);">📊 Monthly SIP ${formatCurrency(amt)}/mo <small>(Day ${asset.sipDay || 5}, ${paySource})</small></span>`;
+        }
       } else {
         planDetailHtml = `<span style="font-size: 11.5px; color: #94a3b8;">One-Time Lumpsum</span>`;
       }
@@ -1554,6 +1642,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // --- Asset Modal Actions ---
 
+  function updateSipFormFieldsVisibility() {
+    if (!assetIsSipCheck || !sipFieldsRow) return;
+    sipFieldsRow.style.display = assetIsSipCheck.checked ? 'flex' : 'none';
+    if (assetIsSipCheck.checked && assetSipFreqSelect) {
+      const f = assetSipFreqSelect.value;
+      if (sipWeeklyDayGroup) sipWeeklyDayGroup.style.display = f === 'weekly' ? 'block' : 'none';
+      if (sipMonthlyDayGroup) sipMonthlyDayGroup.style.display = f === 'monthly' ? 'block' : 'none';
+    }
+  }
+
   function openAssetModalForAdd() {
     if (!window.db.currentUser || window.db.currentUser.isLocal) {
       alert('Please sign in with Google to add or manage your investment portfolio.');
@@ -1568,10 +1666,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     assetPlatformSelect.value = 'zerodha';
     assetInvestedInput.value = '';
     assetCurrentValInput.value = '';
-    assetIsSipCheck.checked = false;
-    sipFieldsRow.style.display = 'none';
-    assetMonthlySipInput.value = '';
-    assetSipDayInput.value = '5';
+    assetIsSipCheck.checked = true;
+    if (assetSipFreqSelect) assetSipFreqSelect.value = 'monthly';
+    if (assetMonthlySipInput) assetMonthlySipInput.value = '';
+    if (assetSipPaymentMethod) assetSipPaymentMethod.value = 'upi';
+    if (assetSipWeekdaySelect) assetSipWeekdaySelect.value = '1';
+    if (assetSipDayInput) assetSipDayInput.value = '5';
+    if (assetSipStartDateInput) assetSipStartDateInput.value = getLocalDateString(new Date());
+    if (assetAutoDeductCheck) assetAutoDeductCheck.checked = true;
+    updateSipFormFieldsVisibility();
+
     assetUnitsInput.value = '';
     assetUnitTypeInput.value = 'units';
     assetDateInput.value = getLocalDateString(new Date());
@@ -1595,9 +1699,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     assetInvestedInput.value = asset.investedAmount || 0;
     assetCurrentValInput.value = (asset.currentValue !== undefined) ? asset.currentValue : (asset.investedAmount || 0);
     assetIsSipCheck.checked = Boolean(asset.isSip);
-    sipFieldsRow.style.display = asset.isSip ? 'flex' : 'none';
-    assetMonthlySipInput.value = asset.monthlySip || '';
-    assetSipDayInput.value = asset.sipDay || '5';
+    
+    const freq = asset.sipFrequency || 'monthly';
+    if (assetSipFreqSelect) assetSipFreqSelect.value = freq;
+    if (assetMonthlySipInput) assetMonthlySipInput.value = asset.sipAmount || asset.monthlySip || '';
+    if (assetSipPaymentMethod) assetSipPaymentMethod.value = asset.sipPaymentMethod || 'upi';
+    if (assetSipWeekdaySelect) assetSipWeekdaySelect.value = String(asset.sipWeekday || 1);
+    if (assetSipDayInput) assetSipDayInput.value = String(asset.sipDay || 5);
+    if (assetSipStartDateInput) assetSipStartDateInput.value = asset.sipStartDate || asset.purchaseDate || getLocalDateString(new Date());
+    if (assetAutoDeductCheck) assetAutoDeductCheck.checked = asset.autoDeduct !== false;
+    updateSipFormFieldsVisibility();
+
     assetUnitsInput.value = asset.units || '';
     assetUnitTypeInput.value = asset.unitType || '';
     assetDateInput.value = asset.purchaseDate || getLocalDateString(new Date());
@@ -1616,19 +1728,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     assetCategorySelect.addEventListener('change', () => {
       const cat = assetCategorySelect.value;
       if (cat === 'gold') {
-        assetPlatformSelect.value = 'other';
+        assetPlatformSelect.value = 'paytm';
         assetUnitTypeInput.value = 'grams';
+        assetIsSipCheck.checked = true;
+        if (assetSipFreqSelect) assetSipFreqSelect.value = 'daily';
+        updateSipFormFieldsVisibility();
       } else if (cat === 'stocks') {
         assetPlatformSelect.value = 'zerodha';
         assetUnitTypeInput.value = 'shares';
-        assetIsSipCheck.checked = false;
-        sipFieldsRow.style.display = 'none';
+        assetIsSipCheck.checked = true;
+        if (assetSipFreqSelect) assetSipFreqSelect.value = 'weekly';
+        updateSipFormFieldsVisibility();
       } else if (cat === 'sip') {
         assetPlatformSelect.value = 'zerodha';
         assetUnitTypeInput.value = 'units';
         assetIsSipCheck.checked = true;
-        sipFieldsRow.style.display = 'flex';
+        if (assetSipFreqSelect) assetSipFreqSelect.value = 'monthly';
+        updateSipFormFieldsVisibility();
       }
+    });
+  }
+
+  if (assetSipFreqSelect) {
+    assetSipFreqSelect.addEventListener('change', () => {
+      updateSipFormFieldsVisibility();
     });
   }
 
@@ -1643,7 +1766,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (assetIsSipCheck) {
     assetIsSipCheck.addEventListener('change', () => {
-      sipFieldsRow.style.display = assetIsSipCheck.checked ? 'flex' : 'none';
+      updateSipFormFieldsVisibility();
     });
   }
 
@@ -1665,6 +1788,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       const id = editAssetId.value;
       const inv = parseFloat(assetInvestedInput.value) || 0;
       const cur = (assetCurrentValInput.value !== undefined && !isNaN(parseFloat(assetCurrentValInput.value))) ? parseFloat(assetCurrentValInput.value) : inv;
+      const isSip = assetIsSipCheck.checked;
+      const sipAmt = isSip ? (parseFloat(assetMonthlySipInput.value) || 0) : 0;
+      const freq = isSip ? (assetSipFreqSelect ? assetSipFreqSelect.value : 'monthly') : 'monthly';
+      const payMethod = isSip ? (assetSipPaymentMethod ? assetSipPaymentMethod.value : 'upi') : 'upi';
 
       const data = {
         name: assetNameInput.value.trim(),
@@ -1672,9 +1799,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         platform: assetPlatformSelect.value,
         investedAmount: inv,
         currentValue: cur,
-        isSip: assetIsSipCheck.checked,
-        monthlySip: assetIsSipCheck.checked ? (parseFloat(assetMonthlySipInput.value) || 0) : 0,
-        sipDay: parseInt(assetSipDayInput.value) || 5,
+        isSip,
+        sipFrequency: freq,
+        sipAmount: sipAmt,
+        sipPaymentMethod: payMethod,
+        sipWeekday: assetSipWeekdaySelect ? parseInt(assetSipWeekdaySelect.value, 10) || 1 : 1,
+        sipDay: assetSipDayInput ? parseInt(assetSipDayInput.value, 10) || 5 : 5,
+        sipStartDate: (assetSipStartDateInput && assetSipStartDateInput.value) ? assetSipStartDateInput.value : assetDateInput.value,
+        autoDeduct: assetAutoDeductCheck ? assetAutoDeductCheck.checked : true,
+        monthlySip: sipAmt,
         units: parseFloat(assetUnitsInput.value) || 0,
         unitType: assetUnitTypeInput.value.trim(),
         purchaseDate: assetDateInput.value,
@@ -1695,6 +1828,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       } finally {
         closeAssetModal();
         refreshAssetsView();
+        refreshDashboard();
       }
     });
   }
@@ -1711,9 +1845,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (topupAssetInfoText) {
       topupAssetInfoText.innerHTML = `Adding investment installment to: <strong style="color:#fde047;">${escapeHtml(asset.name)}</strong> (Current: ${formatCurrency(asset.investedAmount)})`;
     }
-    topupAmountInput.value = asset.isSip && asset.monthlySip ? asset.monthlySip : '';
+    const defaultAmt = asset.isSip ? (asset.sipAmount || asset.monthlySip || '') : '';
+    topupAmountInput.value = defaultAmt;
     topupDateInput.value = getLocalDateString(new Date());
-    topupNoteInput.value = asset.isSip ? 'Monthly SIP installment' : 'Top-up addition';
+    topupNoteInput.value = asset.isSip ? `${(asset.sipFrequency || 'Monthly').toUpperCase()} SIP installment` : 'Top-up addition';
+    if (topupDeductAccountCheck) topupDeductAccountCheck.checked = true;
+    if (topupPaymentMethodSelect) topupPaymentMethodSelect.value = asset.sipPaymentMethod || 'upi';
 
     assetTopupModal.style.display = 'flex';
     topupAmountInput.focus();
@@ -1739,6 +1876,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       const amt = parseFloat(topupAmountInput.value) || 0;
       const date = topupDateInput.value;
       const note = topupNoteInput.value.trim();
+      const deductFromAccount = topupDeductAccountCheck ? topupDeductAccountCheck.checked : false;
+      const payMethod = topupPaymentMethodSelect ? topupPaymentMethodSelect.value : 'upi';
 
       if (amt <= 0) {
         alert('Please enter an amount greater than 0');
@@ -1746,14 +1885,36 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       try {
-        await window.db.addAssetTopup(id, amt, date, note);
-        showToast(`+${formatCurrency(amt)} added to asset holding`);
+        await window.db.addAssetTopup(id, amt, date, note, deductFromAccount, payMethod);
+        showToast(`+${formatCurrency(amt)} added to asset holding${deductFromAccount ? ` (debited from ${payMethod.toUpperCase()})` : ''}`);
       } catch (err) {
         console.error('Topup error:', err);
         showToast(err.message || 'Error adding topup');
       } finally {
         closeTopupModal();
         refreshAssetsView();
+        refreshDashboard();
+      }
+    });
+  }
+
+  // Credit items interactive delegation listener
+  if (creditItemsList && !creditItemsList.hasAttribute('data-has-listener')) {
+    creditItemsList.setAttribute('data-has-listener', 'true');
+    creditItemsList.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const id = btn.dataset.id;
+      if (action === 'toggle-inst') {
+        const idx = parseInt(btn.dataset.idx, 10);
+        await window.db.toggleInstallmentStatus(id, idx);
+        showToast('Updated installment payment status');
+        refreshDashboard();
+      } else if (action === 'toggle-settle') {
+        await window.db.toggleCreditSettlement(id);
+        showToast('Updated statement settlement status');
+        refreshDashboard();
       }
     });
   }
@@ -1792,6 +1953,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (currencySelect) currencySelect.value = (window.db.settings && window.db.settings.currency) || 'INR';
     updateCurrencyDisplay();
     checkDashboardAuth();
+
+    // Check for scheduled SIP deductions
+    if (window.db && window.db.processSipDeductions) {
+      window.db.processSipDeductions().then(res => {
+        if (res && res.deductionsCount > 0) {
+          showToast(`⚡ Processed ${res.deductionsCount} scheduled SIP deduction(s)`);
+          refreshDashboard();
+          refreshAssetsView();
+        }
+      }).catch(() => {});
+    }
 
     // Explicitly refresh all sections, charts, credit center, table, and assets
     refreshDashboard();

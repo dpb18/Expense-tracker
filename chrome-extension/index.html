@@ -627,17 +627,65 @@
           <div class="sip-toggle-row">
             <label class="sip-checkbox-label">
               <input type="checkbox" id="assetIsSipCheck">
-              <span>This is an active Recurring Monthly SIP</span>
+              <span>This is an active Recurring SIP (Auto-deduct from Account / UPI)</span>
             </label>
           </div>
-          <div class="form-row" id="sipFieldsRow" style="display: none; margin-top: 10px;">
-            <div class="form-group flex-1">
-              <label for="assetMonthlySipInput">Monthly SIP Amount (<span class="modalCurrencySymbol">₹</span>)</label>
-              <input type="number" step="100" id="assetMonthlySipInput" class="modal-input" placeholder="e.g. 2500">
+          <div id="sipFieldsRow" style="display: none; margin-top: 12px; flex-direction: column; gap: 10px;">
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label for="assetSipFreqSelect">Frequency *</label>
+                <select id="assetSipFreqSelect" class="modal-select">
+                  <option value="daily">⚡ Daily (Everyday - e.g. Paytm Gold)</option>
+                  <option value="weekly">📅 Weekly (Every Week - e.g. Stocks)</option>
+                  <option value="monthly" selected>📊 Monthly (Every Month - e.g. MF SIP)</option>
+                </select>
+              </div>
+              <div class="form-group flex-1">
+                <label for="assetMonthlySipInput">SIP Amount (<span class="modalCurrencySymbol">₹</span>) *</label>
+                <input type="number" step="1" id="assetMonthlySipInput" class="modal-input" placeholder="e.g. 50 (daily) or 500 (weekly) or 2500">
+              </div>
             </div>
-            <div class="form-group flex-1">
-              <label for="assetSipDayInput">Monthly SIP Debit Day</label>
-              <input type="number" min="1" max="31" id="assetSipDayInput" class="modal-input" placeholder="e.g. 5 (5th of month)">
+
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label for="assetSipPaymentMethod">Deduct From Account / Method *</label>
+                <select id="assetSipPaymentMethod" class="modal-select">
+                  <option value="upi" selected>⚡ UPI / GPay / PhonePe</option>
+                  <option value="bank">🏦 Bank Account / NetBanking</option>
+                  <option value="cash">💵 Cash</option>
+                </select>
+              </div>
+              <!-- Weekly: Day of Week -->
+              <div class="form-group flex-1" id="sipWeeklyDayGroup" style="display: none;">
+                <label for="assetSipWeekdaySelect">Day of Week</label>
+                <select id="assetSipWeekdaySelect" class="modal-select">
+                  <option value="1" selected>Monday</option>
+                  <option value="2">Tuesday</option>
+                  <option value="3">Wednesday</option>
+                  <option value="4">Thursday</option>
+                  <option value="5">Friday</option>
+                  <option value="6">Saturday</option>
+                  <option value="7">Sunday</option>
+                </select>
+              </div>
+              <!-- Monthly: Day of Month -->
+              <div class="form-group flex-1" id="sipMonthlyDayGroup">
+                <label for="assetSipDayInput">Debit Day of Month</label>
+                <input type="number" min="1" max="31" id="assetSipDayInput" class="modal-input" placeholder="e.g. 5 (5th of month)">
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label for="assetSipStartDateInput">SIP Start Date</label>
+                <input type="date" id="assetSipStartDateInput" class="modal-input">
+              </div>
+              <div class="form-group flex-1" style="display: flex; align-items: center; justify-content: flex-start; padding-top: 22px;">
+                <label class="sip-checkbox-label" style="font-size: 12px; cursor: pointer;">
+                  <input type="checkbox" id="assetAutoDeductCheck" checked>
+                  <span>Auto-debit from balance</span>
+                </label>
+              </div>
             </div>
           </div>
         </div>
@@ -691,6 +739,19 @@
         <div class="form-group">
           <label for="topupNoteInput">Note (Optional)</label>
           <input type="text" id="topupNoteInput" class="modal-input" placeholder="e.g. Monthly SIP installment, Bonus top-up">
+        </div>
+        <div class="form-group" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 10px 12px;">
+          <label class="sip-checkbox-label" style="font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="topupDeductAccountCheck" checked>
+            <span>Also deduct from my Account / UPI as an expense</span>
+          </label>
+          <div id="topupPaymentMethodRow" style="margin-top: 8px;">
+            <select id="topupPaymentMethodSelect" class="modal-select" style="font-size: 12px; padding: 6px 10px;">
+              <option value="upi" selected>⚡ UPI / GPay / PhonePe</option>
+              <option value="bank">🏦 Bank Account / NetBanking</option>
+              <option value="cash">💵 Cash</option>
+            </select>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="cancelTopupModalBtn">Cancel</button>
@@ -814,10 +875,10 @@
   <script src="lib/firebase-auth-compat.js"></script>
   <script src="lib/firebase-firestore-compat.js"></script>
   <script src="lib/chart.umd.min.js"></script>
-  <script src="firebase-config.js"></script>
-  <script src="auth.js"></script>
-  <script src="db.js"></script>
-  <script src="dashboard.js"></script>
+  <script src="firebase-config.js?v=2.5"></script>
+  <script src="auth.js?v=2.5"></script>
+  <script src="db.js?v=2.5"></script>
+  <script src="dashboard.js?v=2.5"></script>
 </body>
 
 </html>

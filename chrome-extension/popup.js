@@ -457,9 +457,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       const catObj = allCategories.find(c => c.id === item.category) || { icon: isRollover ? '🔄' : (isIncome ? '💰' : '📦'), name: isRollover ? 'Savings Rollover / B/F' : (isIncome ? 'Income' : 'Other') };
 
       let payTag = '';
-      if (item.paymentMethod === 'credit_card' || item.paymentMethod === 'card') payTag = '💳 Card (Next Mo)';
-      else if (item.paymentMethod === 'lazypay') payTag = '🛍️ LazyPay (Next Mo)';
-      else if (item.paymentMethod === 'flipkart_pay3') payTag = '📦 Pay in 3 (EMI)';
+      if (item.isSipDeduction) payTag = '📊 SIP Auto-Debit';
+      else if (item.paymentMethod === 'credit_card' || item.paymentMethod === 'card') payTag = item.isSettled ? '💳 Settled' : '💳 Card (Next Mo)';
+      else if (item.paymentMethod === 'lazypay') payTag = item.isSettled ? '🛍️ Settled' : '🛍️ LazyPay (Next Mo)';
+      else if (item.paymentMethod === 'flipkart_pay3') {
+        const insts = (window.db && typeof window.db.getNormalizedInstallments === 'function') ? window.db.getNormalizedInstallments(item) : [];
+        const unpaid = insts.filter(i => i.status !== 'paid');
+        payTag = unpaid.length === 0 ? '📦 Pay in 3 (Paid)' : `📦 Pay in 3 (${unpaid.length} due)`;
+      }
 
       const el = document.createElement('div');
       el.className = 'recent-item';
